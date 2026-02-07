@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Assistant</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="overlay">
+      <div class="search-box">
+        <div class="toolbar">
+          <div class="title">AI Assistant</div>
+          <div class="actions">
+            <div class="build">Build 0.1.0</div>
+            <button id="btn-toggle" class="ghost">Обновить</button>
+          </div>
+        </div>
+        <input id="query" type="text" placeholder="Искать файлы, заметки, проекты..." autocomplete="off" />
+        <div id="status" class="status"></div>
+        <div id="results" class="results"></div>
+      </div>
+    </div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

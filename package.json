@@ -1,0 +1,36 @@
+{
+  "name": "ai-desktop-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local AI assistant for desktop search and file management",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^26.7.0"
+  },
+  "dependencies": {
+    "mammoth": "^1.7.0",
+    "pdf-parse": "^1.1.1",
+    "xlsx": "^0.18.5"
+  },
+  "build": {
+    "appId": "com.yourname.aiassistant",
+    "productName": "AIAssistant",
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AIAssistant",
+      "runAfterFinish": true
+    }
+  }
+}

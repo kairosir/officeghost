@@ -1,17 +1,42 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, shell, screen, dialog, Tray, Menu, nativeImage } = require("electron");
-const { fork } = require("child_process");
+const { fork, spawn } = require("child_process");
 const os = require("os");
 const fs = require("fs");
 const path = require("path");
 
 let mainWindow = null;
-let indexStatus = { state: "idle", scanned: 0, fileCount: 0, roots: [] };
+let indexStatus = { state: "idle", scanned: 0, total: 0, fileCount: 0, roots: [], byExt: {}, scannedByExt: {}, lastError: null };
 let indexData = { files: {} };
 let indexPath = "";
 let settingsPath = "";
-let settings = { roots: [], paused: false };
+let settings = {
+  roots: [],
+  paused: false,
+  hotkey: "CommandOrControl+1",
+  theme: "dark",
+  rememberQuery: true,
+  rememberPos: true,
+  windowPos: null,
+  opacity: 0.92,
+  indexIntervalSec: 60,
+  maxFileSizeMb: 20
+};
 let indexWorker = null;
 let tray = null;
+let indexIntervalTimer = null;
+
+function getRustIndexerPath() {
+  if (process.env.RUST_INDEXER && fs.existsSync(process.env.RUST_INDEXER)) {
+    return process.env.RUST_INDEXER;
+  }
+  const binName = process.platform === "win32" ? "rust-indexer.exe" : "rust-indexer";
+  const rootDir = path.join(__dirname, "..");
+  const releasePath = path.join(rootDir, "rust-indexer", "target", "release", binName);
+  const debugPath = path.join(rootDir, "rust-indexer", "target", "debug", binName);
+  if (fs.existsSync(releasePath)) return releasePath;
+  if (fs.existsSync(debugPath)) return debugPath;
+  return null;
+}
 
 function getDefaultRoots() {
   const roots = [];
@@ -88,7 +113,18 @@ function mergeRoots(base, extra) {
 function loadSettings() {
   try {
     if (!fs.existsSync(settingsPath)) {
-      settings = { roots: getDefaultRoots(), paused: false };
+      settings = {
+        roots: getDefaultRoots(),
+        paused: false,
+        hotkey: "CommandOrControl+1",
+        theme: "dark",
+        rememberQuery: true,
+        rememberPos: true,
+        windowPos: null,
+        opacity: 0.92,
+        indexIntervalSec: 60,
+        maxFileSizeMb: 20
+      };
       fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf8");
       return;
     }
@@ -97,8 +133,23 @@ function loadSettings() {
     settings.roots = normalizeRoots(settings.roots);
     settings.roots = mergeRoots(settings.roots, getCoreRoots());
     if (!settings.roots.length) settings.roots = getDefaultRoots();
+    if (!settings.hotkey) settings.hotkey = "CommandOrControl+1";
+    if (!settings.theme) settings.theme = "dark";
+    if (typeof settings.rememberQuery !== "boolean") settings.rememberQuery = true;
+    if (typeof settings.rememberPos !== "boolean") settings.rememberPos = true;
   } catch {
-    settings = { roots: getDefaultRoots(), paused: false };
+    settings = {
+      roots: getDefaultRoots(),
+      paused: false,
+      hotkey: "CommandOrControl+1",
+      theme: "dark",
+      rememberQuery: true,
+      rememberPos: true,
+      windowPos: null,
+      opacity: 0.92,
+      indexIntervalSec: 60,
+      maxFileSizeMb: 20
+    };
   }
 }
 
@@ -139,20 +190,84 @@ function startIndexing() {
     indexWorker = null;
   }
 
+  const rustPath = getRustIndexerPath();
+  if (rustPath) {
+    startRustIndexer(rustPath, roots);
+    return;
+  }
+
+  startJsIndexer(roots);
+}
+
+function startRustIndexer(rustPath, roots) {
+  indexStatus = { state: "indexing", scanned: 0, total: 0, fileCount: 0, roots , byExt: {}, scannedByExt: {}, lastError: null };
+  mainWindow?.webContents.send("index-status", indexStatus);
+
+  const args = ["index", "--index", indexPath, ...roots.flatMap(r => ["--root", r])];
+  const env = {
+    ...process.env,
+    INDEXER_MAX_FILE_SIZE_MB: String(settings.maxFileSizeMb || 20)
+  };
+  const child = spawn(rustPath, args, { stdio: ["ignore", "pipe", "pipe"], env });
+  indexWorker = child;
+
+  let buffer = "";
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      try {
+        const msg = JSON.parse(line);
+        if (msg.type === "progress") {
+          indexStatus = { ...indexStatus, scanned: msg.scanned, total: msg.total ?? indexStatus.total, byExt: msg.byExt || indexStatus.byExt, scannedByExt: msg.scannedByExt || indexStatus.scannedByExt, lastError: null };
+          mainWindow?.webContents.send("index-status", indexStatus);
+        }
+        if (msg.type === "status") {
+          indexStatus = { ...indexStatus, state: msg.state };
+          mainWindow?.webContents.send("index-status", indexStatus);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+  child.stderr.on("data", (chunk) => {
+    indexStatus = { ...indexStatus, state: "error", lastError: chunk.toString() };
+    console.error("Rust indexer stderr", chunk.toString());
+    mainWindow?.webContents.send("index-status", indexStatus);
+  });
+
+  child.on("close", (code) => {
+    if (code === 0) {
+      loadIndex();
+      indexStatus = { ...indexStatus, state: "ready", fileCount: Object.keys(indexData.files || {}).length };
+      mainWindow?.webContents.send("index-status", indexStatus);
+    } else {
+      indexStatus = { ...indexStatus, state: "error", lastError: indexStatus.lastError || `Rust indexer exit code ${code}` };
+    console.error("Rust indexer exit", code);
+      mainWindow?.webContents.send("index-status", indexStatus);
+    }
+  });
+}
+
+function startJsIndexer(roots) {
   const indexerPath = path.join(__dirname, "indexer", "indexer.js");
   const worker = fork(indexerPath, { stdio: ["inherit", "inherit", "inherit", "ipc"] });
   indexWorker = worker;
 
-  indexStatus = { state: "indexing", scanned: 0, fileCount: 0, roots };
+  indexStatus = { state: "indexing", scanned: 0, total: 0, fileCount: 0, roots , byExt: {}, scannedByExt: {}, lastError: null };
 
   worker.on("message", (message) => {
     if (!message) return;
     if (message.type === "progress") {
-      indexStatus = { ...indexStatus, scanned: message.scanned };
+      indexStatus = { ...indexStatus, scanned: message.scanned, total: message.total ?? indexStatus.total, byExt: message.byExt || indexStatus.byExt, scannedByExt: message.scannedByExt || indexStatus.scannedByExt, lastError: null };
       mainWindow?.webContents.send("index-status", indexStatus);
     }
     if (message.type === "status") {
-      indexStatus = { ...indexStatus, state: message.state };
+      indexStatus = { ...indexStatus, state: message.state, lastError: message.error || indexStatus.lastError };
+    if (message.error) console.error("Indexer error", message.error);
       mainWindow?.webContents.send("index-status", indexStatus);
     }
     if (message.type === "done") {
@@ -166,7 +281,7 @@ function startIndexing() {
     }
   });
 
-  worker.send({ type: "start", roots, indexPath });
+  worker.send({ type: "start", roots, indexPath, maxFileSizeMb: settings.maxFileSizeMb || 20 });
 }
 
 function stopIndexing() {
@@ -201,6 +316,17 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
 
+  mainWindow.webContents.on("did-finish-load", () => {
+    mainWindow.webContents.send("settings-updated", settings);
+  });
+
+  mainWindow.on("move", () => {
+    if (!settings.rememberPos) return;
+    const [x, y] = mainWindow.getPosition();
+    settings.windowPos = { x, y };
+    saveSettings();
+  });
+
   mainWindow.on("blur", () => {
     if (!mainWindow.webContents.isDevToolsOpened()) {
       mainWindow.hide();
@@ -227,6 +353,22 @@ function createTray() {
   tray.on("click", () => toggleWindow());
 }
 
+function registerHotkey() {
+  globalShortcut.unregisterAll();
+  const hotkey = settings.hotkey || "CommandOrControl+1";
+  globalShortcut.register(hotkey, () => {
+    toggleWindow();
+  });
+}
+
+function applyWindowPosition() {
+  if (!mainWindow) return;
+  const pos = settings.windowPos;
+  if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
+    mainWindow.setPosition(Math.floor(pos.x), Math.floor(pos.y), false);
+  }
+}
+
 function toggleWindow() {
   if (!mainWindow) return;
 
@@ -235,30 +377,47 @@ function toggleWindow() {
     return;
   }
 
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-  const winBounds = mainWindow.getBounds();
-  const x = Math.floor((width - winBounds.width) / 2);
-  const y = Math.floor(height * 0.15);
-
-  mainWindow.setPosition(x, y, false);
+  const pos = settings.windowPos;
+  if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
+    mainWindow.setPosition(Math.floor(pos.x), Math.floor(pos.y), false);
+  } else {
+    const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+    const winBounds = mainWindow.getBounds();
+    const x = Math.floor((width - winBounds.width) / 2);
+    const y = Math.floor(height * 0.15);
+    mainWindow.setPosition(x, y, false);
+  }
   mainWindow.show();
   mainWindow.focus();
   mainWindow.webContents.send("focus-input");
+}
+
+function scheduleIndexingInterval() {
+  if (indexIntervalTimer) {
+    clearInterval(indexIntervalTimer);
+    indexIntervalTimer = null;
+  }
+  const seconds = Math.max(30, Number.parseInt(settings.indexIntervalSec || 60, 10) || 60);
+  indexIntervalTimer = setInterval(() => {
+    if (settings.paused) return;
+    if (indexStatus.state !== "indexing") {
+      startIndexing();
+    }
+  }, seconds * 1000);
 }
 
 app.whenReady().then(() => {
   createWindow();
   createTray();
 
-  globalShortcut.register("CommandOrControl+1", () => {
-    toggleWindow();
-  });
-
   indexPath = path.join(app.getPath("userData"), "index.json");
   settingsPath = path.join(app.getPath("userData"), "settings.json");
   loadSettings();
+  applyWindowPosition();
+  registerHotkey();
   loadIndex();
   if (!settings.paused) startIndexing();
+  scheduleIndexingInterval();
 
   app.setLoginItemSettings({ openAtLogin: true });
 
@@ -270,6 +429,7 @@ app.whenReady().then(() => {
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
 });
+
 
 ipcMain.handle("open-path", async (_event, filePath) => {
   if (typeof filePath !== "string") return;
@@ -322,6 +482,19 @@ ipcMain.handle("get-index-status", async () => indexStatus);
 
 ipcMain.handle("get-settings", async () => settings);
 
+ipcMain.handle("update-settings", async (_event, partial) => {
+  if (partial && typeof partial === "object") {
+    settings = { ...settings, ...partial };
+    if (partial.rememberPos === false) settings.windowPos = null;
+    saveSettings();
+    if (partial.hotkey) registerHotkey();
+    if (typeof partial.indexIntervalSec !== "undefined") scheduleIndexingInterval();
+    if (typeof partial.maxFileSizeMb !== "undefined" && !settings.paused) startIndexing();
+    if (mainWindow) mainWindow.webContents.send("settings-updated", settings);
+  }
+  return settings;
+});
+
 
 ipcMain.handle("choose-folders", async () => {
   const result = await dialog.showOpenDialog({
@@ -361,7 +534,7 @@ ipcMain.handle("refresh-index", async () => {
     // ignore
   }
   indexData = { files: {} };
-  indexStatus = { state: "indexing", scanned: 0, fileCount: 0, roots: settings.roots || [] };
+  indexStatus = { state: "indexing", scanned: 0, total: 0, fileCount: 0, roots: settings.roots || [] , byExt: {}, scannedByExt: {}, lastError: null };
   settings.paused = false;
   saveSettings();
   startIndexing();

@@ -4,8 +4,8 @@ const mammoth = require("mammoth");
 const pdfParse = require("pdf-parse");
 const xlsx = require("xlsx");
 
-const MAX_FILES = 200;
-const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+const MAX_FILES = Infinity;
+const DEFAULT_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 const MAX_TEXT_CHARS = 20000;
 
 const SUPPORTED_EXTS = new Set([".txt", ".md", ".pdf", ".docx", ".xlsx"]);
@@ -19,6 +19,8 @@ const IGNORE_DIRS = new Set([
   "System Volume Information",
   "$RECYCLE.BIN"
 ]);
+
+let maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES;
 
 async function safeStat(filePath) {
   try {
@@ -62,7 +64,7 @@ async function extractText(filePath) {
   if (!SUPPORTED_EXTS.has(ext)) return "";
 
   const stat = await safeStat(filePath);
-  if (!stat || stat.size > MAX_FILE_SIZE_BYTES) return "";
+  if (!stat || stat.size > maxFileSizeBytes) return "";
 
   if (ext === ".txt" || ext === ".md") {
     const raw = await fs.readFile(filePath, "utf8");
@@ -94,6 +96,22 @@ async function extractText(filePath) {
   return "";
 }
 
+async function countCandidates(roots) {
+  let total = 0;
+  const byExt = {};
+  for (const root of roots) {
+    await walkDir(root, async (filePath) => {
+      const ext = require("path").extname(filePath).toLowerCase();
+      if (!SUPPORTED_EXTS.has(ext)) return;
+      const stat = await safeStat(filePath);
+      if (!stat || stat.size > maxFileSizeBytes) return;
+      total += 1;
+      byExt[ext] = (byExt[ext] || 0) + 1;
+    });
+  }
+  return { total, byExt };
+}
+
 async function buildIndex(roots, indexPath) {
   let index = {
     version: 1,
@@ -110,6 +128,9 @@ async function buildIndex(roots, indexPath) {
 
   const seen = new Set();
   let scanned = 0;
+  const scannedByExt = {};
+  const { total, byExt } = await countCandidates(roots);
+  process.send?.({ type: "progress", scanned, total, byExt, scannedByExt });
 
   for (const root of roots) {
     await walkDir(root, async (filePath) => {
@@ -119,15 +140,16 @@ async function buildIndex(roots, indexPath) {
       if (!SUPPORTED_EXTS.has(ext)) return;
 
       const stat = await safeStat(filePath);
-      if (!stat) return;
+      if (!stat || stat.size > maxFileSizeBytes) return;
 
       seen.add(filePath);
 
       const existing = index.files[filePath];
       if (existing && existing.mtimeMs === stat.mtimeMs && existing.size === stat.size) {
         scanned += 1;
-        if (scanned % 200 === 0) {
-          process.send?.({ type: "progress", scanned });
+        scannedByExt[ext] = (scannedByExt[ext] || 0) + 1;
+        if (scanned % 50 === 0) {
+          process.send?.({ type: "progress", scanned, total, byExt, scannedByExt });
         }
         return;
       }
@@ -151,8 +173,9 @@ async function buildIndex(roots, indexPath) {
       index.files[filePath] = record;
 
       scanned += 1;
-      if (scanned % 200 === 0) {
-        process.send?.({ type: "progress", scanned });
+      scannedByExt[ext] = (scannedByExt[ext] || 0) + 1;
+      if (scanned % 50 === 0) {
+        process.send?.({ type: "progress", scanned, total, byExt, scannedByExt });
       }
     });
   }
@@ -161,7 +184,7 @@ async function buildIndex(roots, indexPath) {
     if (!seen.has(filePath)) delete index.files[filePath];
   }
 
-  process.send?.({ type: "progress", scanned });
+  process.send?.({ type: "progress", scanned, total, byExt, scannedByExt });
   await fs.mkdir(path.dirname(indexPath), { recursive: true });
   await fs.writeFile(indexPath, JSON.stringify(index), "utf8");
   return index;
@@ -169,7 +192,10 @@ async function buildIndex(roots, indexPath) {
 
 process.on("message", async (message) => {
   if (!message || message.type !== "start") return;
-  const { roots, indexPath } = message;
+  const { roots, indexPath, maxFileSizeMb } = message;
+  if (maxFileSizeMb && Number.isFinite(maxFileSizeMb)) {
+    maxFileSizeBytes = Math.max(1, maxFileSizeMb) * 1024 * 1024;
+  }
   process.send?.({ type: "status", state: "indexing" });
 
   try {

@@ -21,3 +21,9 @@ ipcRenderer.on("index-status", (_event, payload) => {
   const evt = new CustomEvent("index-status", { detail: payload });
   window.dispatchEvent(evt);
 });
+
+
+ipcRenderer.on(settings-updated, (_event, payload) => {
+  const evt = new CustomEvent(settings-updated, { detail: payload });
+  window.dispatchEvent(evt);
+});

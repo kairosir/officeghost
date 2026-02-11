@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Настройки</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="overlay">
+      <div class="search-box">
+        <div class="toolbar">
+          <div class="title">Настройки</div>
+          <div class="actions">
+            <button id="settings-close" class="ghost" title="Закрыть">×</button>
+          </div>
+        </div>
+
+        <div class="settings-body">
+          <div class="settings-nav">
+            <div class="settings-nav-title">Разделы</div>
+            <button class="settings-nav-item active" data-section="general">Общее</button>
+            <button class="settings-nav-item" data-section="hotkeys">Горячие клавиши</button>
+            <button class="settings-nav-item" data-section="behavior">Индексация</button>
+            <button class="settings-nav-item" data-section="ai">ИИ</button>
+            <button class="settings-nav-item" data-section="license">Лицензия</button>
+          </div>
+
+          <div class="settings-form">
+            <div class="settings-section" data-section="general">
+              <label class="settings-label">Запоминать последний поиск</label>
+              <input id="settings-remember" type="checkbox" />
+
+              <label class="settings-label">Запоминать позицию окна</label>
+              <input id="settings-remember-pos" type="checkbox" />
+            </div>
+
+            <div class="settings-section" data-section="hotkeys">
+              <label class="settings-label">Горячая клавиша</label>
+              <input id="settings-hotkey" class="settings-input" type="text" placeholder="CommandOrControl+1" />
+              <div class="settings-hint">Одна клавиша или 1 модификатор + клавиша. Одиночная цифра только с numpad.</div>
+            </div>
+
+            <div class="settings-section" data-section="behavior">
+              <label class="settings-label">Отчет индексации</label>
+              <div class="settings-row" id="report-row">
+                <input id="report-path" class="settings-input" type="text" readonly />
+                <button id="report-open" class="ghost" title="Открыть отчет">Открыть</button>
+              </div>
+
+              <label class="settings-label">Интервал авто‑индексации (сек)</label>
+              <input id="settings-interval" class="settings-input" type="number" min="30" step="10" />
+
+              <label class="settings-label">Макс. размер файла (MB)</label>
+              <input id="settings-maxsize" class="settings-input" type="number" min="1" step="1" />
+
+              <label class="settings-label">Без лимита индексации</label>
+              <input id="settings-unlimited" type="checkbox" />
+            </div>
+
+            <div class="settings-section" data-section="ai">
+              <label class="settings-label">Рекомендуемая модель</label>
+              <input id="ai-recommended" class="settings-input" type="text" readonly />
+
+              <label class="settings-label">Текущая модель</label>
+              <select id="settings-ai-model" class="settings-input">
+                <option value="qwen2.5:1.5b">Qwen2.5 1.5B (легкая)</option>
+                <option value="qwen2.5:3b">Qwen2.5 3B (качество выше)</option>
+              </select>
+
+              <label class="settings-label">Профиль устройства</label>
+              <input id="system-profile" class="settings-input" type="text" readonly />
+            </div>
+
+            <div class="settings-section" data-section="license">
+              <label class="settings-label">Email</label>
+              <input id="license-email" class="settings-input" type="email" placeholder="you@example.com" />
+
+              <label class="settings-label">Лицензионный ключ</label>
+              <input id="license-key" class="settings-input" type="text" placeholder="XXXX-XXXX-XXXX" />
+
+              <label class="settings-label">Статус</label>
+              <input id="license-status" class="settings-input" type="text" readonly />
+            </div>
+
+            <div class="settings-actions">
+              <button id="settings-save" class="ghost">Сохранить</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="./settings.js"></script>
+  </body>
+</html>

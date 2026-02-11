@@ -7,6 +7,8 @@ const xlsx = require("xlsx");
 const MAX_FILES = Infinity;
 const DEFAULT_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 const MAX_TEXT_CHARS = 20000;
+const RATE_LIMIT_BATCH = 400;
+const RATE_LIMIT_WINDOW_MS = 90 * 1000;
 
 const SUPPORTED_EXTS = new Set([".txt", ".md", ".pdf", ".docx", ".xlsx"]);
 const IGNORE_DIRS = new Set([
@@ -21,6 +23,9 @@ const IGNORE_DIRS = new Set([
 ]);
 
 let maxFileSizeBytes = DEFAULT_MAX_FILE_SIZE_BYTES;
+let unlimitedIndexing = false;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function safeStat(filePath) {
   try {
@@ -99,6 +104,9 @@ async function extractText(filePath) {
 async function countCandidates(roots) {
   let total = 0;
   const byExt = {};
+  let batchStart = Date.now();
+  let batchCount = 0;
+
   for (const root of roots) {
     await walkDir(root, async (filePath) => {
       const ext = require("path").extname(filePath).toLowerCase();
@@ -110,6 +118,22 @@ async function countCandidates(roots) {
     });
   }
   return { total, byExt };
+}
+
+async function writeReport(indexPath, scanned, total, byExt, scannedByExt) {
+  const report = {
+    updatedAt: new Date().toISOString(),
+    scanned,
+    total,
+    byExt,
+    scannedByExt
+  };
+  try {
+    const reportPath = indexPath.replace(/\.json$/i, "") + "-report.json";
+    await fs.writeFile(reportPath, JSON.stringify(report, null, 2), "utf8");
+  } catch {
+    // ignore
+  }
 }
 
 async function buildIndex(roots, indexPath) {
@@ -132,6 +156,30 @@ async function buildIndex(roots, indexPath) {
   const { total, byExt } = await countCandidates(roots);
   process.send?.({ type: "progress", scanned, total, byExt, scannedByExt });
 
+  let batchStart = Date.now();
+  let batchCount = 0;
+
+  const tick = async (ext) => {
+    scanned += 1;
+    scannedByExt[ext] = (scannedByExt[ext] || 0) + 1;
+
+    if (scanned % 20 === 0) {
+      process.send?.({ type: "progress", scanned, total, byExt, scannedByExt });
+    }
+
+    batchCount += 1;
+    if (!unlimitedIndexing && batchCount >= RATE_LIMIT_BATCH) {
+      const elapsed = Date.now() - batchStart;
+      if (elapsed < RATE_LIMIT_WINDOW_MS) {
+        const waitMs = RATE_LIMIT_WINDOW_MS - elapsed;
+        process.send?.({ type: "throttle", waitMs });
+        await sleep(waitMs);
+      }
+      batchStart = Date.now();
+      batchCount = 0;
+    }
+  };
+
   for (const root of roots) {
     await walkDir(root, async (filePath) => {
       if (scanned >= MAX_FILES) return;
@@ -146,11 +194,7 @@ async function buildIndex(roots, indexPath) {
 
       const existing = index.files[filePath];
       if (existing && existing.mtimeMs === stat.mtimeMs && existing.size === stat.size) {
-        scanned += 1;
-        scannedByExt[ext] = (scannedByExt[ext] || 0) + 1;
-        if (scanned % 50 === 0) {
-          process.send?.({ type: "progress", scanned, total, byExt, scannedByExt });
-        }
+        await tick(ext);
         return;
       }
 
@@ -171,12 +215,7 @@ async function buildIndex(roots, indexPath) {
       }
 
       index.files[filePath] = record;
-
-      scanned += 1;
-      scannedByExt[ext] = (scannedByExt[ext] || 0) + 1;
-      if (scanned % 50 === 0) {
-        process.send?.({ type: "progress", scanned, total, byExt, scannedByExt });
-      }
+      await tick(ext);
     });
   }
 
@@ -187,12 +226,14 @@ async function buildIndex(roots, indexPath) {
   process.send?.({ type: "progress", scanned, total, byExt, scannedByExt });
   await fs.mkdir(path.dirname(indexPath), { recursive: true });
   await fs.writeFile(indexPath, JSON.stringify(index), "utf8");
+  await writeReport(indexPath, scanned, total, byExt, scannedByExt);
   return index;
 }
 
 process.on("message", async (message) => {
   if (!message || message.type !== "start") return;
-  const { roots, indexPath, maxFileSizeMb } = message;
+  const { roots, indexPath, maxFileSizeMb, unlimitedIndexing: unlimited } = message;
+  unlimitedIndexing = !!unlimited;
   if (maxFileSizeMb && Number.isFinite(maxFileSizeMb)) {
     maxFileSizeBytes = Math.max(1, maxFileSizeMb) * 1024 * 1024;
   }

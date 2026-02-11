@@ -1,78 +1,52 @@
 const input = document.getElementById("query");
 const resultsContainer = document.getElementById("results");
 const statusEl = document.getElementById("status");
+const aiRowEl = document.getElementById("ai-row");
+const aiResponseEl = document.getElementById("ai-response");
+const aiFilesEl = document.getElementById("ai-files");
+const aiCreatedEl = document.getElementById("ai-created");
+const noResultsEl = document.getElementById("no-results");
 const btnToggle = document.getElementById("btn-toggle");
 const btnSettings = document.getElementById("btn-settings");
-const settingsPanel = document.getElementById("settings-panel");
-const settingsClose = document.getElementById("settings-close");
-const settingsSave = document.getElementById("settings-save");
-const settingsHotkey = document.getElementById("settings-hotkey");
-const settingsRemember = document.getElementById("settings-remember");
-const settingsRememberPos = document.getElementById("settings-remember-pos");
-const settingsOpacity = document.getElementById("settings-opacity");
-const settingsInterval = document.getElementById("settings-interval");
-const settingsMaxSize = document.getElementById("settings-maxsize");
-const settingsNavItems = Array.from(document.querySelectorAll(".settings-nav-item"));
-const settingsSections = Array.from(document.querySelectorAll(".settings-section"));
+const btnAiMode = document.getElementById("btn-ai-mode");
+const btnClose = document.getElementById("btn-close");
+const btnSend = document.getElementById("btn-send");
 
+let mode = "search";
 let results = [];
+let visibleResults = [];
+let activeFilter = null;
 let activeIndex = 0;
 let status = { state: "idle", scanned: 0, total: 0 };
+let aiStatus = { installed: false, installing: false, model: "qwen2.5:1.5b", progress: "", error: "" };
+let aiFiles = [];
+let aiHasAnswer = false;
+let aiCreatedFile = null;
 let searchTimer = null;
-let settings = { roots: [], paused: false, rememberQuery: true, rememberPos: true };
+let settings = { rememberQuery: true, rememberPos: false, unlimitedIndexing: false, opacity: 0.92 };
 let currentQuery = "";
 let lastQuery = "";
+let throttleUntil = 0;
+let throttleTimer = null;
 
-function renderResults() {
-  resultsContainer.innerHTML = "";
+const filterLabels = { docx: "Word", pdf: "PDF", xlsx: "Excel", txt: "Text", md: "Markdown" };
 
-  results.forEach((item, index) => {
-    const row = document.createElement("div");
-    row.className = "result" + (index === activeIndex ? " active" : "");
-    row.innerHTML = `
-      <div class="result-title">${highlight(item.title, currentQuery)}</div>
-      <div class="result-path">${highlight(item.path, currentQuery)}</div>
-      <div class="result-snippet">${highlight(item.snippet, currentQuery)}</div>
-    `;
-    row.addEventListener("click", () => openResult(index));
-    resultsContainer.appendChild(row);
-  });
+function setHidden(el, hidden) {
+  if (!el) return;
+  el.classList.toggle("hidden", hidden);
 }
 
-function openResult(index) {
-  const item = results[index];
-  if (!item) return;
-  window.assistantApi.openPath(item.path);
-  window.assistantApi.hideWindow();
-}
-
-function updateActiveIndex(nextIndex) {
-  if (!results.length) return;
-  activeIndex = (nextIndex + results.length) % results.length;
-  renderResults();
+function setResultsVisibility(show) {
+  setHidden(resultsContainer, !show);
 }
 
 function escapeHtml(text) {
-  return text
+  return String(text || "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
+    .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#039;");
-}
-
-function normalizeHotkey(value) {
-  if (!value) return "";
-  const parts = value
-    .split(/\+|\s+/)
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((p) => (p.length === 1 ? p.toUpperCase() : p));
-  const uniq = [];
-  for (const p of parts) {
-    if (!uniq.includes(p)) uniq.push(p);
-  }
-  return uniq.join("+");
 }
 
 function highlight(text, query = "") {
@@ -84,38 +58,271 @@ function highlight(text, query = "") {
   return safeText.replace(regex, (match) => `<span class="highlight">${match}</span>`);
 }
 
+function parseProgressMeta(progressText) {
+  const text = String(progressText || "");
+  const percentMatch = text.match(/(\d+)%/);
+  const value = percentMatch ? Math.max(0, Math.min(100, parseInt(percentMatch[1], 10))) : null;
+  return { text, percent: value };
+}
+
+function updateWindowHeight() {
+  if (mode === "search") {
+    if (!currentQuery) {
+      window.assistantApi.setWindowHeight(200);
+      return;
+    }
+    const hasRows = visibleResults.length > 0;
+    window.assistantApi.setWindowHeight(hasRows ? 420 : 230);
+    return;
+  }
+
+  const baseHeight = aiStatus.installed ? 290 : 220;
+  const withAnswerHeight = aiStatus.installed ? 400 : 320;
+  window.assistantApi.setWindowHeight(aiHasAnswer ? withAnswerHeight : baseHeight);
+}
+
+function renderNoResults() {
+  if (mode !== "search") {
+    setHidden(noResultsEl, true);
+    return;
+  }
+  const show = Boolean(currentQuery && visibleResults.length === 0);
+  setHidden(noResultsEl, !show);
+}
+
+function renderCreatedFile() {
+  if (!aiCreatedFile) {
+    aiCreatedEl.innerHTML = "";
+    setHidden(aiCreatedEl, true);
+    return;
+  }
+
+  aiCreatedEl.innerHTML = `
+    <div class="created-title">Создан файл: ${escapeHtml(aiCreatedFile.name || "result")}</div>
+    <div class="created-path">${escapeHtml(aiCreatedFile.path || "")}</div>
+    <div class="created-actions">
+      <button class="result-action" data-open-file>Открыть</button>
+      <button class="result-action" data-open-folder>📁 Папка</button>
+    </div>
+  `;
+  setHidden(aiCreatedEl, false);
+
+  aiCreatedEl.querySelector("[data-open-file]")?.addEventListener("click", () => {
+    window.assistantApi.openPath(aiCreatedFile.path);
+  });
+  aiCreatedEl.querySelector("[data-open-folder]")?.addEventListener("click", () => {
+    window.assistantApi.openInFolder(aiCreatedFile.path);
+  });
+}
+
+function renderResults() {
+  resultsContainer.innerHTML = "";
+  visibleResults = activeFilter
+    ? results.filter((r) => r.path?.toLowerCase().endsWith(`.${activeFilter}`))
+    : results;
+
+  visibleResults.forEach((item, index) => {
+    const row = document.createElement("div");
+    row.className = "result" + (index === activeIndex ? " active" : "");
+    row.innerHTML = `
+      <div class="result-head">
+        <div class="result-title">${highlight(item.title || "", currentQuery)}</div>
+        <button class="result-action" title="Показать в папке" data-folder>📁</button>
+      </div>
+      <div class="result-path">${highlight(item.path || "", currentQuery)}</div>
+      <div class="result-snippet">${highlight(item.snippet || "", currentQuery)}</div>
+    `;
+    row.addEventListener("click", () => openResult(index));
+    row.querySelector("[data-folder]")?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (item.path) window.assistantApi.openInFolder(item.path);
+    });
+    resultsContainer.appendChild(row);
+  });
+
+  renderNoResults();
+}
+
+function renderMode() {
+  const aiMode = mode === "ai";
+  btnAiMode.classList.toggle("active", aiMode);
+  btnAiMode.textContent = "ИИ";
+
+  if (aiMode) {
+    input.placeholder = "Напиши задачу по файлам...";
+    setHidden(btnSend, false);
+    setHidden(aiFilesEl, !aiStatus.installed);
+    setHidden(aiResponseEl, !aiHasAnswer);
+    setResultsVisibility(false);
+    setHidden(noResultsEl, true);
+  } else {
+    input.placeholder = "Искать файлы, заметки, проекты...";
+    setHidden(btnSend, true);
+    setHidden(aiResponseEl, true);
+    setHidden(aiFilesEl, true);
+    setHidden(aiCreatedEl, true);
+    setResultsVisibility(Boolean(currentQuery && results.length));
+  }
+
+  updateWindowHeight();
+}
+
+function renderAiFiles() {
+  if (!aiFilesEl) return;
+  if (!aiFiles.length) {
+    aiFilesEl.textContent = "Перетащи сюда файлы для ИИ";
+    return;
+  }
+  aiFilesEl.innerHTML = aiFiles
+    .map((filePath, idx) => `<span class="ai-file-pill">${escapeHtml(filePath.split(/[\\/]/).pop())}<button class="ai-file-remove" data-remove="${idx}" title="Удалить">×</button></span>`)
+    .join("");
+
+  aiFilesEl.querySelectorAll(".ai-file-remove").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const idx = Number(btn.dataset.remove);
+      if (Number.isFinite(idx)) {
+        aiFiles.splice(idx, 1);
+        renderAiFiles();
+      }
+    });
+  });
+}
+
+function openResult(index) {
+  const item = visibleResults[index];
+  if (!item) return;
+  window.assistantApi.openPath(item.path);
+  window.assistantApi.hideWindow();
+}
+
+function updateActiveIndex(nextIndex) {
+  if (!visibleResults.length) return;
+  activeIndex = (nextIndex + visibleResults.length) % visibleResults.length;
+  renderResults();
+}
+
 function renderStatus() {
   const byExt = status.byExt || {};
   const scannedByExt = status.scannedByExt || {};
-  const parts = Object.keys(byExt).sort().map((ext) => {
-    const total = byExt[ext] || 0;
-    const done = scannedByExt[ext] || 0;
-    return `${ext}: ${done}/${total}`;
-  });
-  const summary = parts.length ? ` | ${parts.join("  ")}` : "";
 
+  statusEl.innerHTML = "";
+
+  let textLine = "";
   if (status.state === "indexing") {
-    statusEl.textContent = `Индексация... ${status.scanned}/${status.total || "?"}${summary}`;
-    btnToggle.textContent = "Обновить";
-    return;
+    const limitLabel = settings.unlimitedIndexing ? "без лимита" : "лимит 400 / 1.5 мин";
+    textLine = `Индексация... ${status.scanned}/${status.total || "?"} (${limitLabel})`;
+  } else if (status.state === "ready") {
+    textLine = `Индекс готов. Файлов: ${status.fileCount || 0}`;
+  } else if (status.state === "paused") {
+    textLine = "Индексация на паузе";
+  } else if (status.state === "error") {
+    textLine = status.lastError ? `Ошибка индексации: ${status.lastError}` : "Ошибка индексации. Проверь логи.";
   }
-  if (status.state === "ready") {
-    statusEl.textContent = `Индекс готов. Файлов: ${status.fileCount || 0}${summary}`;
-    btnToggle.textContent = "Обновить";
-    return;
+
+  if (textLine) {
+    const span = document.createElement("span");
+    span.className = "status-text";
+    span.textContent = textLine;
+    statusEl.appendChild(span);
   }
-  if (status.state === "paused") {
-    statusEl.textContent = "Индексация на паузе";
-    btnToggle.textContent = "Обновить";
-    return;
+
+  if (!settings.unlimitedIndexing && throttleUntil && Date.now() < throttleUntil) {
+    const secs = Math.max(0, Math.ceil((throttleUntil - Date.now()) / 1000));
+    const pause = document.createElement("span");
+    pause.className = "status-text";
+    pause.textContent = `Пауза: ${secs} сек`;
+    statusEl.appendChild(pause);
   }
-  if (status.state === "error") {
-    const err = status.lastError ? `Ошибка индексации: ${status.lastError}` : "Ошибка индексации. Проверь логи.";
-    statusEl.textContent = err;
-    btnToggle.textContent = "Обновить";
-    return;
+
+  if (mode !== "search") return;
+
+  const filters = ["docx", "pdf", "xlsx", "txt", "md"];
+  if (status.state) {
+    const wrap = document.createElement("div");
+    wrap.className = "status-filters";
+    filters.forEach((ext) => {
+      const total = byExt[`.${ext}`] || 0;
+      const done = scannedByExt[`.${ext}`] || 0;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "status-filter" + (activeFilter === ext ? " active" : "");
+      btn.dataset.ext = ext;
+      btn.textContent = `${filterLabels[ext]} ${done}/${total}`;
+      btn.addEventListener("click", () => {
+        activeFilter = activeFilter === ext ? null : ext;
+        renderResults();
+        renderStatus();
+        updateWindowHeight();
+      });
+      wrap.appendChild(btn);
+    });
+    statusEl.appendChild(wrap);
   }
-  statusEl.textContent = "";
+}
+
+function renderAiRow() {
+  if (!aiRowEl) return;
+  aiRowEl.innerHTML = "";
+
+  const left = document.createElement("div");
+  left.className = "ai-progress-wrap";
+
+  const text = document.createElement("span");
+  text.className = "ai-text";
+
+  if (aiStatus.installing) {
+    const meta = parseProgressMeta(aiStatus.progress);
+    text.textContent = meta.text || "ИИ: установка...";
+    left.appendChild(text);
+
+    const progress = document.createElement("div");
+    progress.className = "ai-progress";
+    const fill = document.createElement("div");
+    fill.className = "ai-progress-fill";
+    fill.style.width = `${meta.percent ?? 8}%`;
+    progress.appendChild(fill);
+    left.appendChild(progress);
+  } else if (aiStatus.installed) {
+    text.textContent = `ИИ установлен (${aiStatus.model || "model"})`;
+    left.appendChild(text);
+  } else {
+    text.textContent = "ИИ не установлен";
+    left.appendChild(text);
+  }
+
+  aiRowEl.appendChild(left);
+
+  if (aiStatus.error) {
+    const error = document.createElement("span");
+    error.className = "ai-error";
+    error.textContent = aiStatus.error;
+    aiRowEl.appendChild(error);
+  }
+
+  if (aiStatus.installing) return;
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ai-btn";
+
+  if (aiStatus.installed) {
+    btn.textContent = "Удалить";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      await window.assistantApi.removeAi();
+    });
+  } else {
+    btn.textContent = "Установить ИИ";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      await window.assistantApi.installAi();
+    });
+  }
+
+  aiRowEl.appendChild(btn);
 }
 
 function applySettings(newSettings) {
@@ -126,26 +333,31 @@ function applySettings(newSettings) {
   document.documentElement.style.setProperty("--muted", "#9aa2ad");
   document.documentElement.style.setProperty("--panel", "rgba(12, 14, 20, 0.7)");
   document.documentElement.style.setProperty("--border", "rgba(255, 255, 255, 0.08)");
-  const opacityRow = document.getElementById("settings-opacity-row");
-  if (opacityRow) opacityRow.style.display = "flex";
-  settingsHotkey.value = normalizeHotkey(settings.hotkey || "CommandOrControl+1");
-  settingsRemember.checked = !!settings.rememberQuery;
-  settingsRememberPos.checked = settings.rememberPos !== false;
-  if (settingsOpacity) settingsOpacity.value = settings.opacity || 0.92;
-  if (settingsInterval) settingsInterval.value = settings.indexIntervalSec || 60;
-  if (settingsMaxSize) settingsMaxSize.value = settings.maxFileSizeMb || 20;
 }
 
-function activateSection(id) {
-  settingsNavItems.forEach((btn) => btn.classList.toggle("active", btn.dataset.section === id));
-  settingsSections.forEach((section) => {
-    section.classList.toggle("active", section.dataset.section === id);
-  });
-}
+async function runAiQuery(query) {
+  aiHasAnswer = true;
+  aiCreatedFile = null;
+  renderCreatedFile();
+  setHidden(aiResponseEl, false);
+  updateWindowHeight();
+  aiResponseEl.innerHTML = "<div class=\"ai-answer pending\">Думаю...</div>";
 
-settingsNavItems.forEach((btn) => {
-  btn.addEventListener("click", () => activateSection(btn.dataset.section));
-});
+  const resp = await window.assistantApi.askAi(query, aiFiles);
+  if (!resp?.ok) {
+    aiResponseEl.innerHTML = `<div class=\"ai-answer error\">${escapeHtml(resp?.error || "Ошибка запроса")}</div>`;
+    return;
+  }
+
+  const answer = resp.answer || "";
+  aiResponseEl.innerHTML = `<div class=\"ai-answer\">${escapeHtml(answer).replace(/\n/g, "<br/>")}</div>`;
+
+  const created = await window.assistantApi.createFileFromAi({ query, answer });
+  if (created?.ok && created.path) {
+    aiCreatedFile = created;
+    renderCreatedFile();
+  }
+}
 
 input.addEventListener("input", (event) => {
   const query = event.target.value.trim();
@@ -154,13 +366,30 @@ input.addEventListener("input", (event) => {
   if (settings.rememberQuery) {
     localStorage.setItem("lastQuery", lastQuery);
   }
+
+  if (mode === "ai") {
+    if (!query) {
+      aiHasAnswer = false;
+      aiResponseEl.innerHTML = "";
+      aiCreatedFile = null;
+      renderCreatedFile();
+      setHidden(aiResponseEl, true);
+      updateWindowHeight();
+    }
+    return;
+  }
+
   clearTimeout(searchTimer);
   searchTimer = setTimeout(async () => {
     if (!query) {
       results = [];
+      visibleResults = [];
       activeIndex = 0;
       renderResults();
       renderStatus();
+      setResultsVisibility(false);
+      renderNoResults();
+      updateWindowHeight();
       return;
     }
 
@@ -168,22 +397,34 @@ input.addEventListener("input", (event) => {
     activeIndex = 0;
     renderResults();
     renderStatus();
+    setResultsVisibility(visibleResults.length > 0);
+    updateWindowHeight();
   }, 200);
 });
 
-input.addEventListener("keydown", (event) => {
-  if (event.key === "ArrowDown") {
-    event.preventDefault();
-    updateActiveIndex(activeIndex + 1);
-  }
-  if (event.key === "ArrowUp") {
-    event.preventDefault();
-    updateActiveIndex(activeIndex - 1);
-  }
+input.addEventListener("keydown", async (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
+    if (mode === "ai") {
+      const query = input.value.trim();
+      if (query) await runAiQuery(query);
+      return;
+    }
     openResult(activeIndex);
+    return;
   }
+
+  if (mode === "search") {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      updateActiveIndex(activeIndex + 1);
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      updateActiveIndex(activeIndex - 1);
+    }
+  }
+
   if (event.key === "Escape") {
     event.preventDefault();
     window.assistantApi.hideWindow();
@@ -201,12 +442,32 @@ window.addEventListener("focus-input", () => {
   input.select();
 });
 
+window.addEventListener("dragover", (event) => {
+  if (mode !== "ai" || !aiStatus.installed) return;
+  event.preventDefault();
+});
+
+window.addEventListener("drop", (event) => {
+  if (mode !== "ai" || !aiStatus.installed) return;
+  event.preventDefault();
+  const files = Array.from(event.dataTransfer?.files || []);
+  const paths = files.map((f) => f.path).filter(Boolean);
+  if (!paths.length) return;
+  aiFiles = Array.from(new Set([...aiFiles, ...paths])).slice(0, 8);
+  renderAiFiles();
+});
+
 window.addEventListener("DOMContentLoaded", () => {
   input.focus();
+  setResultsVisibility(false);
+  renderAiFiles();
+  renderCreatedFile();
+
   window.assistantApi.getIndexStatus().then((data) => {
     status = data || status;
     renderStatus();
   });
+
   window.assistantApi.getSettings().then((data) => {
     applySettings(data || settings);
     if (settings.rememberQuery) {
@@ -218,30 +479,34 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  if (window.assistantApi.getAiStatus) {
+    window.assistantApi.getAiStatus().then((data) => {
+      if (data && typeof data === "object") aiStatus = { ...aiStatus, ...data };
+      renderAiRow();
+    });
+  }
+
   window.addEventListener("settings-updated", (event) => {
     applySettings(event.detail || settings);
+    renderStatus();
   });
 
-  activateSection("general");
-});
+  window.addEventListener("ai-status", (event) => {
+    aiStatus = { ...aiStatus, ...(event.detail || {}) };
+    renderAiRow();
+    renderMode();
+    renderAiFiles();
+  });
 
-window.addEventListener("blur", () => {
-  if (!settings.rememberQuery) {
-    input.value = "";
-    results = [];
-  } else {
-    input.value = lastQuery;
-  }
-  currentQuery = "";
-  renderResults();
-  renderStatus();
-});
+  window.addEventListener("ai-progress", (event) => {
+    const progress = event.detail?.message || "";
+    aiStatus = { ...aiStatus, progress };
+    renderAiRow();
+  });
 
-window.addEventListener("message", (event) => {
-  if (event.data?.type === "index-status") {
-    status = event.data.payload || status;
-    renderStatus();
-  }
+  renderAiRow();
+  renderMode();
+  renderNoResults();
 });
 
 window.addEventListener("index-status", (event) => {
@@ -249,57 +514,48 @@ window.addEventListener("index-status", (event) => {
   renderStatus();
 });
 
-window.addEventListener("index-status-update", (event) => {
-  status = event.detail || status;
-  renderStatus();
+window.addEventListener("index-throttle", (event) => {
+  const waitMs = event.detail?.waitMs || 0;
+  if (settings.unlimitedIndexing) return;
+  if (waitMs > 0) {
+    throttleUntil = Date.now() + waitMs;
+    if (throttleTimer) clearInterval(throttleTimer);
+    throttleTimer = setInterval(() => {
+      if (!throttleUntil || Date.now() >= throttleUntil) {
+        clearInterval(throttleTimer);
+        throttleTimer = null;
+        throttleUntil = 0;
+      }
+      renderStatus();
+    }, 1000);
+  }
 });
 
 btnToggle.addEventListener("click", async () => {
+  status = { ...status, state: "indexing", scanned: 0, total: status.total || 0 };
+  renderStatus();
   const updated = await window.assistantApi.refreshIndex();
   status = updated || status;
   renderStatus();
 });
 
 btnSettings.addEventListener("click", () => {
-  settingsPanel.classList.add("show");
+  window.assistantApi.openSettings();
 });
 
-settingsClose.addEventListener("click", () => {
-  settingsPanel.classList.remove("show");
+btnAiMode.addEventListener("click", () => {
+  mode = mode === "ai" ? "search" : "ai";
+  renderMode();
+  renderStatus();
+  input.focus();
 });
 
-settingsSave.addEventListener("click", async () => {
-  const partial = {
-    hotkey: normalizeHotkey(settingsHotkey.value.trim()) || "CommandOrControl+1",
-    rememberQuery: !!settingsRemember.checked,
-    rememberPos: !!settingsRememberPos.checked,
-    opacity: settingsOpacity ? parseFloat(settingsOpacity.value) : 0.92,
-    indexIntervalSec: settingsInterval ? parseInt(settingsInterval.value || "60", 10) : 60,
-    maxFileSizeMb: settingsMaxSize ? parseInt(settingsMaxSize.value || "20", 10) : 20
-  };
-  if (!settingsRememberPos.checked) {
-    partial.windowPos = null;
-  }
-  const updated = await window.assistantApi.updateSettings(partial);
-  applySettings(updated || settings);
-  settingsPanel.classList.remove("show");
+btnClose.addEventListener("click", () => {
+  window.assistantApi.hideWindow();
 });
-if (settingsOpacity) {
-  settingsOpacity.addEventListener("input", () => {
-    const value = parseFloat(settingsOpacity.value || "0.92");
-    document.documentElement.style.setProperty("--bg", `rgba(5, 5, 8, ${value})`);
-  });
-  settingsOpacity.addEventListener("change", async () => {
-    const value = parseFloat(settingsOpacity.value || "0.92");
-    const updated = await window.assistantApi.updateSettings({ opacity: value });
-    applySettings(updated || settings);
-  });
-}
 
-
-settingsHotkey.addEventListener("input", () => {
-  const formatted = normalizeHotkey(settingsHotkey.value);
-  if (formatted !== settingsHotkey.value) {
-    settingsHotkey.value = formatted;
-  }
+btnSend.addEventListener("click", async () => {
+  const query = input.value.trim();
+  if (!query || mode !== "ai") return;
+  await runAiQuery(query);
 });

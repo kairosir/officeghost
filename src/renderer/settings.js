@@ -14,6 +14,8 @@ const reportPathInput = document.getElementById("report-path");
 const reportOpenBtn = document.getElementById("report-open");
 const settingsSave = document.getElementById("settings-save");
 const settingsClose = document.getElementById("settings-close");
+const contactEmailBtn = document.getElementById("contact-email");
+const contactDiscordBtn = document.getElementById("contact-discord");
 const settingsNavItems = Array.from(document.querySelectorAll(".settings-nav-item"));
 const settingsSections = Array.from(document.querySelectorAll(".settings-section"));
 
@@ -164,6 +166,18 @@ settingsHotkey.addEventListener("keydown", (event) => {
   settingsHotkey.value = currentHotkey;
   settingsHotkey.blur();
 });
+
+if (contactEmailBtn) {
+  contactEmailBtn.addEventListener("click", () => {
+    window.assistantApi.openPath("mailto:support@officeghost.app");
+  });
+}
+
+if (contactDiscordBtn) {
+  contactDiscordBtn.addEventListener("click", () => {
+    window.assistantApi.openPath("https://discord.gg/officeghost");
+  });
+}
 
 activateSection("general");
 

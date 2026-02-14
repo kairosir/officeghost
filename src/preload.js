@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld("assistantApi", {
   getAiStatus: () => ipcRenderer.invoke("get-ai-status"),
   installAi: () => ipcRenderer.invoke("install-ai"),
   removeAi: () => ipcRenderer.invoke("remove-ai"),
+  openSortWindow: () => ipcRenderer.invoke("open-sort-window"),
+  closeSortWindow: () => ipcRenderer.invoke("close-sort-window"),
+  getDuplicateResult: () => ipcRenderer.invoke("get-duplicate-result"),
+  startDuplicateSort: () => ipcRenderer.invoke("start-duplicate-sort"),
+  deleteDuplicateFiles: (paths) => ipcRenderer.invoke("delete-duplicate-files", paths),
   askAi: (query, filePaths) => ipcRenderer.invoke("ask-ai", query, filePaths),
   createFileFromAi: (payload) => ipcRenderer.invoke("create-file-from-ai", payload),
   getSystemProfile: () => ipcRenderer.invoke("get-system-profile"),
@@ -53,5 +58,17 @@ ipcRenderer.on("ai-status", (_event, payload) => {
 
 ipcRenderer.on("ai-progress", (_event, payload) => {
   const evt = new CustomEvent("ai-progress", { detail: payload });
+  window.dispatchEvent(evt);
+});
+
+
+ipcRenderer.on("sort-progress", (_event, payload) => {
+  const evt = new CustomEvent("sort-progress", { detail: payload });
+  window.dispatchEvent(evt);
+});
+
+
+ipcRenderer.on("sort-opened", (_event, payload) => {
+  const evt = new CustomEvent("sort-opened", { detail: payload });
   window.dispatchEvent(evt);
 });

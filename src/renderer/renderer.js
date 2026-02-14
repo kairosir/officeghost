@@ -11,6 +11,23 @@ const btnSettings = document.getElementById("btn-settings");
 const btnAiMode = document.getElementById("btn-ai-mode");
 const btnClose = document.getElementById("btn-close");
 const btnSend = document.getElementById("btn-send");
+const sortModalEl = document.getElementById("sort-modal");
+const sortCardEl = document.getElementById("sort-card");
+const sortDragEl = document.getElementById("sort-drag");
+const sortSearchEl = document.getElementById("sort-search");
+const sortSpaceInfoEl = document.getElementById("sort-space-info");
+const sortWarningEl = document.getElementById("sort-warning");
+const sortProgressEl = document.getElementById("sort-progress");
+const sortResultsEl = document.getElementById("sort-results");
+const sortProgressTextEl = document.getElementById("sort-progress-text");
+const sortProgressFillEl = document.getElementById("sort-progress-fill");
+const sortSummaryEl = document.getElementById("sort-summary");
+const sortListEl = document.getElementById("sort-list");
+const sortStartBtn = document.getElementById("sort-start");
+const sortCancelBtn = document.getElementById("sort-cancel");
+const sortCloseBtn = document.getElementById("sort-close");
+const sortDeleteSelectedBtn = document.getElementById("sort-delete-selected");
+const sortDeleteAllBtn = document.getElementById("sort-delete-all");
 
 let mode = "search";
 let results = [];
@@ -27,7 +44,10 @@ let settings = { rememberQuery: true, rememberPos: false, unlimitedIndexing: fal
 let currentQuery = "";
 let lastQuery = "";
 let throttleUntil = 0;
-let throttleTimer = null;
+let duplicateGroups = [];
+let sortRunning = false;
+let sortWindowDrag = null;
+let sortSearchQuery = "";
 
 const filterLabels = { docx: "Word", pdf: "PDF", xlsx: "Excel", txt: "Text", md: "Markdown" };
 
@@ -204,6 +224,7 @@ function updateActiveIndex(nextIndex) {
   renderResults();
 }
 
+
 function renderStatus() {
   const byExt = status.byExt || {};
   const scannedByExt = status.scannedByExt || {};
@@ -259,8 +280,251 @@ function renderStatus() {
       });
       wrap.appendChild(btn);
     });
+
+    const sortBtn = document.createElement("button");
+    sortBtn.type = "button";
+    sortBtn.className = "status-filter status-sort-btn";
+    sortBtn.textContent = "Сортировка";
+    sortBtn.addEventListener("click", () => {
+      window.assistantApi.openSortWindow();
+    });
+    wrap.appendChild(sortBtn);
+
     statusEl.appendChild(wrap);
   }
+}
+
+
+function showSortSection(section) {
+  setHidden(sortWarningEl, section !== "warning");
+  setHidden(sortProgressEl, section !== "progress");
+  setHidden(sortResultsEl, section !== "results");
+  if (sortCardEl) {
+    sortCardEl.classList.toggle("sort-results-mode", section === "results");
+  }
+}
+
+function openSortWarning() {
+  if (sortRunning) return;
+  setHidden(sortModalEl, false);
+  showSortSection("warning");
+}
+
+function closeSortModal() {
+  if (sortRunning) return;
+  setHidden(sortModalEl, true);
+}
+
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value;
+  let idx = 0;
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024;
+    idx += 1;
+  }
+  return `${size.toFixed(size >= 100 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
+function filteredDuplicateGroups() {
+  const q = sortSearchQuery.trim().toLowerCase();
+  if (!q) return duplicateGroups;
+  return duplicateGroups.map((group) => {
+    const inOriginal = `${group.original?.name || ""} ${group.original?.path || ""}`.toLowerCase().includes(q);
+    const copies = (group.copies || []).filter((copy) => `${copy.name || ""} ${copy.path || ""}`.toLowerCase().includes(q));
+    if (inOriginal) return group;
+    if (!copies.length) return null;
+    return { ...group, copies };
+  }).filter(Boolean);
+}
+
+function renderDuplicateGroups() {
+  if (!sortListEl) return;
+  sortListEl.innerHTML = "";
+
+  const groupsToShow = filteredDuplicateGroups();
+  if (!groupsToShow.length) {
+    sortListEl.innerHTML = '<div class="sort-empty">Похожие файлы не найдены по текущему фильтру.</div>';
+    return;
+  }
+
+  const head = document.createElement("div");
+  head.className = "sort-table-head";
+  head.innerHTML = `
+    <div class="sort-check-all-wrap"><input id="sort-select-all" type="checkbox" checked /><span>Выбрать</span></div>
+    <div>Файл</div>
+    <div>Путь</div>
+    <div>Совпадает по</div>
+    <div>Папка</div>
+  `;
+  sortListEl.appendChild(head);
+
+  groupsToShow.forEach((group, groupIndex) => {
+    const container = document.createElement("div");
+    container.className = "sort-group-block";
+
+    const groupLabel = document.createElement("div");
+    groupLabel.className = "sort-group-label";
+    groupLabel.textContent = `Группа ${groupIndex + 1}: ${group.reason || "Похожие файлы"}`;
+    container.appendChild(groupLabel);
+
+    const originalRow = document.createElement("div");
+    originalRow.className = "sort-table-row sort-original-row";
+    originalRow.innerHTML = `
+      <div>—</div>
+      <div class="sort-file-cell">${escapeHtml(group.original?.name || group.original?.path || "")} <span class="sort-size">(${formatBytes(group.original?.size || 0)})</span></div>
+      <div class="sort-path-cell">${escapeHtml(group.original?.path || "")}</div>
+      <div>Оригинал</div>
+      <div><button class="result-action" data-folder="${escapeHtml(group.original?.path || "")}" title="Открыть папку">📁</button></div>
+    `;
+    container.appendChild(originalRow);
+
+    (group.copies || []).forEach((copy, idx) => {
+      const checkboxId = `dup-${groupIndex}-${idx}`;
+      const row = document.createElement("div");
+      row.className = "sort-table-row sort-copy-row";
+      row.innerHTML = `
+        <div><input id="${checkboxId}" type="checkbox" class="dup-checkbox" data-path="${escapeHtml(copy.path || "")}" checked /></div>
+        <div class="sort-file-cell"><label for="${checkboxId}">${escapeHtml(copy.name || copy.path || "")}</label> <span class="sort-size">(${formatBytes(copy.size || 0)})</span></div>
+        <div class="sort-path-cell">${escapeHtml(copy.path || "")}</div>
+        <div>${escapeHtml(group.reason || "Похожие")}</div>
+        <div><button class="result-action" data-folder="${escapeHtml(copy.path || "")}" title="Открыть папку">📁</button></div>
+      `;
+      container.appendChild(row);
+    });
+
+    sortListEl.appendChild(container);
+  });
+
+  sortListEl.querySelectorAll("[data-folder]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      const filePath = btn.getAttribute("data-folder");
+      if (filePath) window.assistantApi.openInFolder(filePath);
+    });
+  });
+
+  const selectAll = document.getElementById("sort-select-all");
+  selectAll?.addEventListener("change", () => {
+    const checked = !!selectAll.checked;
+    sortListEl.querySelectorAll(".dup-checkbox").forEach((el) => {
+      el.checked = checked;
+    });
+  });
+}
+
+function updateSortSummary() {
+  const groups = duplicateGroups.length;
+  const copies = duplicateGroups.reduce((acc, group) => acc + (group.copies || []).length, 0);
+  const totalBytes = duplicateGroups.reduce((acc, group) => {
+    return acc + (group.copies || []).reduce((sum, copy) => sum + Number(copy.size || 0), 0);
+  }, 0);
+
+  sortSummaryEl.textContent = groups
+    ? `Найдено групп: ${groups}. Копий для удаления: ${copies}.`
+    : "Похожие файлы не найдены.";
+
+  if (sortSpaceInfoEl) {
+    sortSpaceInfoEl.textContent = `Общий размер копий: ${formatBytes(totalBytes)}`;
+  }
+}
+
+function setSortProgress(processed, total, label) {
+  const safeTotal = Math.max(1, Number(total || 0));
+  const safeProcessed = Math.max(0, Number(processed || 0));
+  const pct = Math.max(0, Math.min(100, Math.round((safeProcessed / safeTotal) * 100)));
+  if (sortProgressTextEl) sortProgressTextEl.textContent = `${label} ${safeProcessed}/${safeTotal}`;
+  if (sortProgressFillEl) sortProgressFillEl.style.width = `${pct}%`;
+}
+
+async function startDuplicateSort() {
+  sortRunning = true;
+  setHidden(sortModalEl, false);
+  showSortSection("progress");
+  setSortProgress(0, 1, "Анализ файлов...");
+
+  const response = await window.assistantApi.startDuplicateSort();
+  sortRunning = false;
+
+  if (!response?.ok) {
+    showSortSection("results");
+    duplicateGroups = [];
+    updateSortSummary();
+    sortSummaryEl.textContent = `Ошибка сортировки: ${response?.error || "Неизвестная ошибка"}`;
+    renderDuplicateGroups();
+    return;
+  }
+
+  duplicateGroups = Array.isArray(response.groups) ? response.groups : [];
+  sortSearchQuery = "";
+  if (sortSearchEl) sortSearchEl.value = "";
+  showSortSection("results");
+  updateSortSummary();
+  renderDuplicateGroups();
+}
+
+function getSelectedDuplicatePaths() {
+  return Array.from(document.querySelectorAll(".dup-checkbox:checked"))
+    .map((el) => el.dataset.path)
+    .filter(Boolean);
+}
+
+async function removeDuplicatePaths(paths) {
+  if (!paths.length) return;
+  const response = await window.assistantApi.deleteDuplicateFiles(paths);
+  if (!response?.ok) {
+    sortSummaryEl.textContent = `Ошибка удаления: ${response?.error || "Неизвестная ошибка"}`;
+    return;
+  }
+
+  const deletedSet = new Set(response.deleted || []);
+  duplicateGroups = duplicateGroups.map((group) => ({
+    ...group,
+    copies: (group.copies || []).filter((copy) => !deletedSet.has(copy.path))
+  })).filter((group) => (group.copies || []).length > 0);
+
+  updateSortSummary();
+  renderDuplicateGroups();
+
+  const deletedCount = (response.deleted || []).length;
+  const failedCount = (response.failed || []).length;
+  sortSummaryEl.textContent += ` Удалено: ${deletedCount}.` + (failedCount ? ` Ошибок: ${failedCount}.` : "");
+}
+
+function initSortFloatingWindow() {
+  if (!sortCardEl || !sortDragEl) return;
+
+  sortCardEl.style.left = "20px";
+  sortCardEl.style.top = "20px";
+
+  sortDragEl.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) return;
+    const rect = sortCardEl.getBoundingClientRect();
+    sortWindowDrag = {
+      startX: event.clientX,
+      startY: event.clientY,
+      left: rect.left,
+      top: rect.top
+    };
+    event.preventDefault();
+  });
+
+  window.addEventListener("mousemove", (event) => {
+    if (!sortWindowDrag) return;
+    const dx = event.clientX - sortWindowDrag.startX;
+    const dy = event.clientY - sortWindowDrag.startY;
+    const left = Math.max(0, sortWindowDrag.left + dx);
+    const top = Math.max(0, sortWindowDrag.top + dy);
+    sortCardEl.style.left = `${left}px`;
+    sortCardEl.style.top = `${top}px`;
+  });
+
+  window.addEventListener("mouseup", () => {
+    sortWindowDrag = null;
+  });
 }
 
 function renderAiRow() {
@@ -426,6 +690,7 @@ input.addEventListener("keydown", async (event) => {
   }
 
   if (event.key === "Escape") {
+    if (!sortModalEl?.classList.contains("hidden")) return;
     event.preventDefault();
     window.assistantApi.hideWindow();
   }
@@ -433,6 +698,7 @@ input.addEventListener("keydown", async (event) => {
 
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    if (!sortModalEl?.classList.contains("hidden")) return;
     window.assistantApi.hideWindow();
   }
 });
@@ -503,6 +769,48 @@ window.addEventListener("DOMContentLoaded", () => {
     aiStatus = { ...aiStatus, progress };
     renderAiRow();
   });
+
+  window.addEventListener("sort-progress", (event) => {
+    const detail = event.detail || {};
+    if (detail.type === "scan") {
+      setSortProgress(detail.processed || 0, detail.total || 1, "Анализ файлов...");
+    }
+    if (detail.type === "done") {
+      setSortProgress(detail.total || 1, detail.total || 1, "Завершено");
+    }
+  });
+
+  sortCancelBtn?.addEventListener("click", () => {
+    closeSortModal();
+  });
+
+  sortCloseBtn?.addEventListener("click", () => {
+    closeSortModal();
+  });
+
+  sortStartBtn?.addEventListener("click", async () => {
+    if (sortRunning) return;
+    await startDuplicateSort();
+  });
+
+  sortDeleteSelectedBtn?.addEventListener("click", async () => {
+    const selected = getSelectedDuplicatePaths();
+    await removeDuplicatePaths(selected);
+  });
+
+  sortDeleteAllBtn?.addEventListener("click", async () => {
+    const all = Array.from(document.querySelectorAll(".dup-checkbox"))
+      .map((el) => el.dataset.path)
+      .filter(Boolean);
+    await removeDuplicatePaths(all);
+  });
+
+  sortSearchEl?.addEventListener("input", (event) => {
+    sortSearchQuery = String(event.target.value || "");
+    renderDuplicateGroups();
+  });
+
+  initSortFloatingWindow();
 
   renderAiRow();
   renderMode();

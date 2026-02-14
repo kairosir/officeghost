@@ -1,5 +1,5 @@
 {
-  "name": "ai-desktop-assistant",
+  "name": "officeghost",
   "version": "0.1.0",
   "private": true,
   "description": "Local AI assistant for desktop search and file management",
@@ -16,11 +16,12 @@
   "dependencies": {
     "mammoth": "^1.7.0",
     "pdf-parse": "^1.1.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "electron-updater": "^6.3.9"
   },
   "build": {
-    "appId": "com.yourname.aiassistant",
-    "productName": "AIAssistant",
+    "appId": "com.officeghost.app",
+    "productName": "OfficeGhost",
     "win": {
       "target": "nsis",
       "icon": "build/icon.ico"
@@ -30,7 +31,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "AIAssistant",
+      "shortcutName": "OfficeGhost",
       "runAfterFinish": true,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
@@ -38,7 +39,17 @@
       "include": "build/installer.nsh"
     },
     "mac": {
-      "icon": "build/icon.icns"
-    }
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://updates.officeghost.app"
+      }
+    ]
   }
 }

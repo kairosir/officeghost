@@ -23,7 +23,7 @@
             <button class="settings-nav-item" data-section="hotkeys">Горячие клавиши</button>
             <button class="settings-nav-item" data-section="behavior">Индексация</button>
             <button class="settings-nav-item" data-section="ai">ИИ</button>
-            <button class="settings-nav-item" data-section="license">Лицензия</button>
+            <button class="settings-nav-item" data-section="contacts">Контакты</button>
           </div>
 
           <div class="settings-form">
@@ -72,15 +72,12 @@
               <input id="system-profile" class="settings-input" type="text" readonly />
             </div>
 
-            <div class="settings-section" data-section="license">
-              <label class="settings-label">Email</label>
-              <input id="license-email" class="settings-input" type="email" placeholder="you@example.com" />
-
-              <label class="settings-label">Лицензионный ключ</label>
-              <input id="license-key" class="settings-input" type="text" placeholder="XXXX-XXXX-XXXX" />
-
-              <label class="settings-label">Статус</label>
-              <input id="license-status" class="settings-input" type="text" readonly />
+            <div class="settings-section" data-section="contacts">
+              <label class="settings-label">Связаться с нами</label>
+              <div class="settings-row" id="contacts-row">
+                <button id="contact-email" class="ghost" title="Написать на почту">Почта</button>
+                <button id="contact-discord" class="ghost" title="Открыть Discord">Discord</button>
+              </div>
             </div>
 
             <div class="settings-actions">

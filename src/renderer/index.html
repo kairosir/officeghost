@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Assistant</title>
+    <title>OfficeGhost</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="overlay">
       <div class="search-box">
         <div class="toolbar">
-          <div class="title">AI Assistant</div>
+          <div class="title">OfficeGhost</div>
           <div class="actions">
             <div class="build">Build 0.8</div>
             <button id="btn-ai-mode" class="icon-btn text-btn" title="Режим ИИ" aria-label="Режим ИИ">ИИ</button>
@@ -38,6 +38,51 @@
         <div id="ai-created" class="ai-created hidden"></div>
         <div id="no-results" class="no-results hidden">Результатов нет</div>
         <div id="results" class="results hidden"></div>
+
+        <div id="sort-modal" class="sort-modal hidden">
+          <div id="sort-card" class="sort-card">
+            <div id="sort-drag" class="sort-drag">
+              <div class="sort-drag-title">Сортировка файлов</div>
+              
+            </div>
+
+            <div id="sort-warning" class="sort-section">
+              <div class="sort-title">Перед запуском</div>
+              <div class="sort-text">
+                Перед запуском закрой все документы и не открывай файлы до завершения сортировки.<br/>
+                Сейчас сортировка работает только с файлами: Word (DOC/DOCX), Excel (XLS/XLSX), PDF.<br/>
+                На этапе анализа ассистент ничего не удаляет и не изменяет. После анализа ты сам выбираешь, какие копии удалить.
+              </div>
+              <div class="sort-actions">
+                <button id="sort-cancel" class="result-action">Отмена</button>
+                <button id="sort-start" class="ai-btn">Начать</button>
+              </div>
+            </div>
+
+            <div id="sort-progress" class="sort-section hidden">
+              <div class="sort-title">Сортировка выполняется</div>
+              <div id="sort-progress-text" class="sort-text">Подготовка...</div>
+              <div class="sort-progress">
+                <div id="sort-progress-fill" class="sort-progress-fill"></div>
+              </div>
+            </div>
+
+            <div id="sort-results" class="sort-section hidden">
+              <div class="sort-head">
+                <div class="sort-title">Похожие файлы</div>
+                <input id="sort-search" class="settings-input sort-search" type="text" placeholder="Поиск по найденным копиям..." />
+              </div>
+              <div id="sort-summary" class="sort-text"></div>
+              <div class="sort-actions">
+                <div id="sort-space-info" class="sort-space-info">Общий размер копий: 0 B</div>
+                <button id="sort-delete-selected" class="result-action">Удалить выбранные копии</button>
+                <button id="sort-delete-all" class="ai-btn">Удалить все копии</button>
+                <button id="sort-close" class="result-action">Закрыть</button>
+              </div>
+              <div id="sort-list" class="sort-list"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 

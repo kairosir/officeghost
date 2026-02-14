@@ -3,10 +3,19 @@ const { fork, spawn } = require("child_process");
 const os = require("os");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const XLSX = require("xlsx");
+
+let autoUpdater = null;
+try {
+  ({ autoUpdater } = require("electron-updater"));
+} catch {
+  autoUpdater = null;
+}
 
 let mainWindow = null;
 let settingsWindow = null;
+let sortWindow = null;
 let indexStatus = { state: "idle", scanned: 0, total: 0, fileCount: 0, roots: [], byExt: {}, scannedByExt: {}, lastError: null };
 let indexData = { files: {} };
 let indexPath = "";
@@ -37,6 +46,14 @@ let mainWindowPrevBounds = null;
 const AI_MODEL = "qwen2.5:3b";
 let aiStatePath = "";
 let aiStatus = { installed: false, installing: false, model: AI_MODEL, progress: "", error: "" };
+let sortStatus = { running: false, phase: "idle", processed: 0, total: 0, groups: 0, copies: 0, error: "" };
+let sortSessionId = 0;
+let lastDuplicateResult = { groups: [], total: 0, copies: 0 };
+
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let updateCheckTimer = null;
+let manualUpdateCheck = false;
+let updateDownloadedInfo = null;
 
 function getRustIndexerPath() {
   if (process.env.RUST_INDEXER && fs.existsSync(process.env.RUST_INDEXER)) {
@@ -180,6 +197,55 @@ function saveSettings() {
     // ignore
   }
 }
+
+function migrateLegacyUserData() {
+  try {
+    const currentDir = app.getPath("userData");
+    const appData = app.getPath("appData");
+
+    const legacyNames = [
+      "ai-desktop-assistant",
+      "AIAssistant",
+      "AI Assistant"
+    ];
+
+    const targets = [
+      { name: "index.json", overrideIfMissingOnly: true },
+      { name: "index-report.json", overrideIfMissingOnly: true },
+      { name: "ai-state.json", overrideIfMissingOnly: false },
+      { name: "ai-installed.json", overrideIfMissingOnly: false },
+      { name: "settings.json", overrideIfMissingOnly: true }
+    ];
+
+    for (const legacyName of legacyNames) {
+      const legacyDir = path.join(appData, legacyName);
+      if (legacyDir === currentDir) continue;
+      if (!fs.existsSync(legacyDir)) continue;
+
+      for (const target of targets) {
+        const src = path.join(legacyDir, target.name);
+        const dst = path.join(currentDir, target.name);
+        if (!fs.existsSync(src)) continue;
+
+        if (target.overrideIfMissingOnly && fs.existsSync(dst)) continue;
+
+        try {
+          if (fs.existsSync(dst)) {
+            const backup = dst + ".bak";
+            if (!fs.existsSync(backup)) fs.copyFileSync(dst, backup);
+          }
+          fs.copyFileSync(src, dst);
+          console.log("Migrated", target.name, "from", legacyDir);
+        } catch (error) {
+          console.error("Migration failed for", target.name, error?.message || error);
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Legacy migration error", error?.message || error);
+  }
+}
+
 
 
 
@@ -362,7 +428,7 @@ async function pullAiModel() {
 const RU_STOPWORDS = new Set([
   "и", "или", "в", "во", "на", "по", "из", "за", "для", "к", "ко", "о", "об", "от", "до", "у", "а", "но", "не", "да", "же", "ли",
   "это", "этот", "эта", "эти", "тот", "та", "те", "так", "также", "вот", "тут", "там", "где", "когда", "как", "какой", "какая", "есть",
-  "найди", "найти", "поищи", "поиск", "информация", "инфо", "данные", "покажи", "скажи", "расскажи", "собери", "сделай", "пожалуйста", "про",
+  "найди", "найти", "поищи", "поиск", "информация", "инфо", "данные", "покажи", "скажи", "расскажи", "собери", "сделай", "дай", "мне", "нужно", "пожалуйста", "про", "что", "где", "кто", "какой",
   "about", "the", "a", "an", "to", "for", "in", "on", "of", "with", "find", "search", "info", "information", "please"
 ]);
 
@@ -440,10 +506,10 @@ function collectContextFromIndex(query, maxItems = 10) {
   const raw = String(query || "").trim().toLowerCase();
   if (!raw) return [];
 
-  const tokens = tokenizeQuery(raw);
+  const tokens = tokenizeQuery(raw).filter((token) => token.length >= 2);
   if (!tokens.length) return [];
 
-  const tokenVarMap = new Map(tokens.map((t) => [t, tokenVariants(t)]));
+  const tokenVarMap = new Map(tokens.map((tok) => [tok, tokenVariants(tok)]));
   const scored = [];
 
   for (const item of Object.values(indexData.files || {})) {
@@ -453,11 +519,11 @@ function collectContextFromIndex(query, maxItems = 10) {
     const textLower = text.toLowerCase();
 
     let score = 0;
-    const hitTokens = new Set();
+    let hitCount = 0;
 
-    if (name.includes(raw) || pathText.includes(raw) || textLower.includes(raw)) {
-      score += 14;
-      hitTokens.add("phrase");
+    if (raw.length >= 3 && (name.includes(raw) || pathText.includes(raw) || textLower.includes(raw))) {
+      score += 24;
+      hitCount += 1;
     }
 
     for (const token of tokens) {
@@ -472,25 +538,32 @@ function collectContextFromIndex(query, maxItems = 10) {
         if (!inText && textLower.includes(v)) inText = true;
       }
 
-      if (inName) score += 8;
-      if (inPath) score += 4;
-      if (inText) score += 2;
-      if (inName || inPath || inText) hitTokens.add(token);
+      if (inName || inPath || inText) hitCount += 1;
+      if (inName) score += 14;
+      if (inPath) score += 8;
+      if (inText) score += 5;
     }
 
-    const minHits = tokens.length >= 2 ? 2 : 1;
-    if (!score || hitTokens.size < minHits) continue;
+    if (score < 6 || hitCount === 0) continue;
 
-    let snippet = text.slice(0, 560);
-    const focusToken = tokens.find((t) => {
-      const variants = tokenVarMap.get(t) || [t];
-      return variants.some((v) => textLower.includes(v));
-    }) || raw;
+    // snippet around the first matched token variant
+    let snippet = text.slice(0, 760);
+    let bestPos = -1;
+    let bestToken = "";
+    for (const token of tokens) {
+      const variants = tokenVarMap.get(token) || [token];
+      for (const v of variants) {
+        const idx = textLower.indexOf(v);
+        if (idx !== -1 && (bestPos === -1 || idx < bestPos)) {
+          bestPos = idx;
+          bestToken = v;
+        }
+      }
+    }
 
-    const idx = textLower.indexOf(focusToken);
-    if (idx !== -1) {
-      const start = Math.max(0, idx - 220);
-      const end = Math.min(text.length, idx + focusToken.length + 380);
+    if (bestPos !== -1) {
+      const start = Math.max(0, bestPos - 280);
+      const end = Math.min(text.length, bestPos + bestToken.length + 520);
       snippet = text.slice(start, end);
     }
 
@@ -573,18 +646,20 @@ function isSmallTalkQuery(query) {
 
 function buildFileTaskPrompt(query, contextBlock, attachedBlock) {
   return [
-    "Ты дружелюбный локальный AI-ассистент для работы с файлами пользователя.",
-    "Используй только факты из локальных файлов ниже. Интернет использовать нельзя.",
-    "Отвечай простым человеческим языком, без канцелярита и без шаблонных заголовков.",
-    "Если данных мало, предложи 1-2 уточняющих вопроса или попроси добавить файл.",
-    "Если уверенно нашел данные, кратко перечисли, что именно нашел и где (пути файлов можно упомянуть в конце обычным списком).",
+    "Ты дружелюбный локальный AI-помощник.",
+    "Работай ТОЛЬКО на основе локального контекста ниже и вложенных файлов.",
+    "Интернет не используй и не упоминай его.",
+    "Отвечай естественно и по-человечески: без формата 'Найдено/Кратко/Источники'.",
+    "Если контекст неполный, сначала дай то, что нашел, и задай 1 короткий уточняющий вопрос.",
+    "Если пользователь просит про человека (например ФИО), собери все найденные факты в один понятный ответ.",
+    "",
     "Запрос пользователя:",
     query,
     "",
-    "Контекст из индекса:",
+    "Локальный контекст:",
     contextBlock || "[пусто]",
     "",
-    "Прикрепленные пользователем файлы:",
+    "Вложенные файлы от пользователя:",
     attachedBlock || "[нет]"
   ].join("\n");
 }
@@ -629,25 +704,6 @@ async function askLocalAi(query, filePaths = []) {
     ? buildFileTaskPrompt(q, contextBlock, attachedBlock)
     : buildGeneralLocalPrompt(smallTalk ? q : q + " (без интернета)");
 
-  const yesNoFilesQuery = /^(есть\s+ли|есть)\b.*(файл|файлы|документ|документы)/i.test(q);
-  if (yesNoFilesQuery && useFileMode) {
-    if (!hasLocalContext && !hasAttachedText) {
-      const rough = quickCategoryMatches(q, 3);
-      if (rough.length) {
-        return `Да, похожие файлы есть. Вот примеры:
-- ${rough.join("\n- ")}`;
-      }
-      return "Пока не нашел подходящие файлы по этому запросу. Можешь уточнить тему или добавить файл в окно ИИ.";
-    }
-    const examples = contextItems.slice(0, 3).map((item) => item.path).filter(Boolean);
-    const prefix = contextItems.length > 0 ? "Да, похожие файлы есть." : "Да, нашел данные во вложенных файлах.";
-    return examples.length
-      ? `${prefix}
-Примеры:
-- ${examples.join("\n- ")}`
-      : prefix;
-  }
-
   try {
     const answerApi = await generateWithOllamaApi(model, prompt);
     if (answerApi) return answerApi;
@@ -661,6 +717,243 @@ async function askLocalAi(query, filePaths = []) {
   const answer = String(out.stdout || "").trim();
   if (!answer) return "Пустой ответ от модели. Повтори запрос.";
   return answer;
+}
+
+
+function isMoveIntentQuery(query) {
+  const q = String(query || "").toLowerCase();
+  return /(перемест|перенес|перенеси|перемести|move|mv|перекинь)/i.test(q);
+}
+
+function collectKnownDirectories() {
+  const dirs = new Set();
+  for (const item of Object.values(indexData.files || {})) {
+    if (item?.path) dirs.add(path.dirname(item.path));
+  }
+
+  for (const root of normalizeRoots(mergeRoots(settings.roots || [], getCoreRoots()))) {
+    dirs.add(root);
+  }
+
+  try {
+    dirs.add(app.getPath("desktop"));
+    dirs.add(app.getPath("downloads"));
+    dirs.add(app.getPath("documents"));
+  } catch {
+    // ignore
+  }
+
+  return Array.from(dirs).filter((d) => typeof d === "string" && d);
+}
+
+function resolveDestinationFromQuery(query) {
+  const q = String(query || "").trim();
+  const qLower = q.toLowerCase();
+
+  const specials = [
+    { re: /(рабоч(ий|его)\s*стол|desktop)/i, get: () => app.getPath("desktop") },
+    { re: /(загрузк|downloads?)/i, get: () => app.getPath("downloads") },
+    { re: /(документ|documents?)/i, get: () => app.getPath("documents") }
+  ];
+
+  for (const s of specials) {
+    if (s.re.test(qLower)) {
+      try {
+        const pth = s.get();
+        if (pth && fs.existsSync(pth) && fs.lstatSync(pth).isDirectory()) {
+          return { ok: true, dir: pth };
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  const absoluteMatch = q.match(/([A-Za-z]:\\[^\n\r"']+|\/[^\n\r"']+)/);
+  if (absoluteMatch) {
+    const rawPath = absoluteMatch[1].trim();
+    if (fs.existsSync(rawPath) && fs.lstatSync(rawPath).isDirectory()) {
+      return { ok: true, dir: rawPath };
+    }
+  }
+
+  const folderMatch = q.match(/(?:в|во|to)\s+папк[ауеы]?\s+["“]?([^"”\n\r,.]+)["”]?/i)
+    || q.match(/(?:в|во|to)\s+["“]([^"”\n\r]+)["”]/i);
+
+  if (!folderMatch) {
+    return { ok: false, error: "Не понял, в какую папку перемещать. Укажи: например 'в папку Отчеты' или 'на рабочий стол'." };
+  }
+
+  const folderName = String(folderMatch[1] || "").trim().toLowerCase();
+  if (!folderName) {
+    return { ok: false, error: "Укажи название папки назначения." };
+  }
+
+  const dirs = collectKnownDirectories();
+  const ranked = dirs
+    .map((dir) => {
+      const base = path.basename(dir).toLowerCase();
+      let score = 0;
+      if (base === folderName) score += 100;
+      if (base.includes(folderName)) score += 40;
+      if (dir.toLowerCase().includes(folderName)) score += 20;
+      return { dir, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (!ranked.length) {
+    return { ok: false, error: "Папка '" + folderMatch[1] + "' не найдена среди доступных путей." };
+  }
+
+  if (ranked.length > 1 && ranked[0].score === ranked[1].score) {
+    return { ok: false, error: "Есть несколько папок '" + folderMatch[1] + "'. Укажи путь точнее." };
+  }
+
+  return { ok: true, dir: ranked[0].dir };
+}
+
+function resolveSourceFilesForMove(query, attachedPaths = []) {
+  const uniq = new Set();
+
+  for (const pth of Array.isArray(attachedPaths) ? attachedPaths : []) {
+    if (typeof pth !== "string") continue;
+    try {
+      if (fs.existsSync(pth) && fs.lstatSync(pth).isFile()) uniq.add(pth);
+    } catch {
+      // ignore
+    }
+  }
+
+  const quotedNames = Array.from(String(query || "").matchAll(/["“]([^"”]{2,})["”]/g)).map((m) => String(m[1] || "").trim().toLowerCase());
+  if (quotedNames.length) {
+    for (const item of Object.values(indexData.files || {})) {
+      const pth = item?.path;
+      const nm = String(item?.name || "").toLowerCase();
+      if (!pth || !fs.existsSync(pth)) continue;
+      try {
+        if (!fs.lstatSync(pth).isFile()) continue;
+      } catch {
+        continue;
+      }
+      if (quotedNames.some((qname) => nm.includes(qname))) uniq.add(pth);
+    }
+  }
+
+  const byContext = collectContextFromIndex(query, 24)
+    .map((x) => x.path)
+    .filter((pth) => typeof pth === "string" && fs.existsSync(pth));
+  for (const pth of byContext) {
+    try {
+      if (fs.lstatSync(pth).isFile()) uniq.add(pth);
+    } catch {
+      // ignore
+    }
+  }
+
+  return Array.from(uniq).slice(0, 24);
+}
+
+function uniqueTargetPath(destDir, originalName) {
+  const parsed = path.parse(originalName);
+  let candidate = path.join(destDir, originalName);
+  if (!fs.existsSync(candidate)) return candidate;
+  let i = 1;
+  while (i < 1000) {
+    const next = path.join(destDir, parsed.name + " (" + i + ")" + parsed.ext);
+    if (!fs.existsSync(next)) return next;
+    i += 1;
+  }
+  return path.join(destDir, parsed.name + "_" + Date.now() + parsed.ext);
+}
+
+function moveFileAtomic(sourcePath, destDir) {
+  const targetPath = uniqueTargetPath(destDir, path.basename(sourcePath));
+  try {
+    fs.renameSync(sourcePath, targetPath);
+  } catch (error) {
+    if (error && error.code === "EXDEV") {
+      fs.copyFileSync(sourcePath, targetPath);
+      fs.unlinkSync(sourcePath);
+    } else {
+      throw error;
+    }
+  }
+  return targetPath;
+}
+
+function updateIndexAfterMove(movedPairs) {
+  if (!Array.isArray(movedPairs) || !movedPairs.length) return;
+  const movedMap = new Map(movedPairs.map((x) => [x.from, x.to]));
+
+  for (const key of Object.keys(indexData.files || {})) {
+    const item = indexData.files[key];
+    if (!item?.path) continue;
+    const nextPath = movedMap.get(item.path);
+    if (!nextPath) continue;
+    item.path = nextPath;
+    item.name = path.basename(nextPath);
+  }
+
+  try {
+    fs.writeFileSync(indexPath, JSON.stringify(indexData, null, 2), "utf8");
+    indexStatus = { ...indexStatus, fileCount: Object.keys(indexData.files || {}).length };
+    mainWindow?.webContents.send("index-status", indexStatus);
+  } catch {
+    // ignore
+  }
+}
+
+async function tryHandleMoveRequest(query, attachedPaths = []) {
+  if (!isMoveIntentQuery(query)) return { handled: false };
+
+  const dest = resolveDestinationFromQuery(query);
+  if (!dest.ok) return { handled: true, ok: false, message: dest.error };
+
+  const sources = resolveSourceFilesForMove(query, attachedPaths)
+    .filter((src) => path.dirname(src) !== dest.dir);
+
+  if (!sources.length) {
+    return {
+      handled: true,
+      ok: false,
+      message: "Не нашел файлы для перемещения. Укажи имя файла в кавычках или перетащи файлы в окно ИИ."
+    };
+  }
+
+  if (sources.length > 20) {
+    return {
+      handled: true,
+      ok: false,
+      message: "Найдено слишком много файлов (" + sources.length + "). Уточни запрос, чтобы переместить не больше 20 файлов за раз."
+    };
+  }
+
+  const moved = [];
+  const failed = [];
+
+  for (const src of sources) {
+    try {
+      const to = moveFileAtomic(src, dest.dir);
+      moved.push({ from: src, to });
+    } catch (error) {
+      failed.push({ path: src, error: error?.message || String(error) });
+    }
+  }
+
+  if (moved.length) {
+    updateIndexAfterMove(moved);
+  }
+
+  const preview = moved.slice(0, 5).map((x) => "- " + x.to).join("\n");
+  let message = moved.length
+    ? "Готово. Переместил " + moved.length + " файл(ов) в: " + dest.dir
+    : "Не удалось переместить файлы в: " + dest.dir;
+
+  if (preview) message += "\n\nПримеры:\n" + preview;
+  if (failed.length) message += "\n\nОшибок: " + failed.length + ".";
+
+  return { handled: true, ok: moved.length > 0, message, moved, failed, destination: dest.dir };
 }
 
 function detectCreateFileIntent(query) {
@@ -734,6 +1027,33 @@ function loadIndex() {
     }
   } catch {
     indexData = { files: {} };
+  }
+}
+
+function hasSavedIndexSnapshot() {
+  try {
+    if (!indexPath || !fs.existsSync(indexPath)) return false;
+    const raw = fs.readFileSync(indexPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const count = Object.keys(parsed?.files || {}).length;
+    if (count > 0) {
+      indexData = parsed;
+      indexStatus = { ...indexStatus, state: "ready", fileCount: count };
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function hasIndexFileOnDisk() {
+  try {
+    if (!indexPath || !fs.existsSync(indexPath)) return false;
+    const stat = fs.statSync(indexPath);
+    return stat.isFile() && stat.size > 16;
+  } catch {
+    return false;
   }
 }
 
@@ -894,6 +1214,43 @@ function centerWithSettings() {
   settingsWindow.setPosition(x + mainBounds.width + gap, y, false);
 }
 
+function createSortWindow() {
+  if (sortWindow) {
+    sortWindow.show();
+    sortWindow.focus();
+    return;
+  }
+
+  sortWindow = new BrowserWindow({
+    width: 980,
+    height: 640,
+    minWidth: 860,
+    minHeight: 500,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    titleBarStyle: "hidden",
+    resizable: true,
+    movable: true,
+    alwaysOnTop: false,
+    skipTaskbar: false,
+    hasShadow: true,
+    icon: getAppIconPath(),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  sortWindow.loadFile(path.join(__dirname, "renderer", "sort.html"));
+  sortWindow.once("ready-to-show", () => sortWindow?.show());
+  sortWindow.on("closed", () => {
+    sortWindow = null;
+  });
+}
+
 function createSettingsWindow() {
   if (settingsWindow) {
     settingsWindow.show();
@@ -971,6 +1328,120 @@ function createWindow() {
 
   }
 
+function initAutoUpdater() {
+  if (!autoUpdater) return;
+  if (!app.isPackaged) return;
+
+  const feedUrl = process.env.OFFICEGHOST_UPDATE_URL || process.env.UPDATE_URL || "";
+  if (feedUrl) {
+    autoUpdater.setFeedURL({ provider: "generic", url: feedUrl });
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("error", (error) => {
+    console.error("AutoUpdater error:", error?.message || error);
+    if (manualUpdateCheck) {
+      manualUpdateCheck = false;
+      dialog.showMessageBox({
+        type: "error",
+        title: "Обновление",
+        message: "Не удалось проверить обновления",
+        detail: String(error?.message || error || "Неизвестная ошибка")
+      }).catch(() => {});
+    }
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    if (!manualUpdateCheck) return;
+    manualUpdateCheck = false;
+    dialog.showMessageBox({
+      type: "info",
+      title: "Обновление",
+      message: "У вас уже установлена последняя версия."
+    }).catch(() => {});
+  });
+
+  autoUpdater.on("update-available", (info) => {
+    const ver = info?.version ? ` ${info.version}` : "";
+    if (manualUpdateCheck) {
+      manualUpdateCheck = false;
+      dialog.showMessageBox({
+        type: "info",
+        title: "Обновление",
+        message: `Найдена новая версия${ver}. Скачивание началось автоматически.`
+      }).catch(() => {});
+    }
+  });
+
+  autoUpdater.on("update-downloaded", async (info) => {
+    updateDownloadedInfo = info || null;
+    const ver = info?.version ? ` ${info.version}` : "";
+    const result = await dialog.showMessageBox({
+      type: "question",
+      buttons: ["Обновить сейчас", "Позже"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "Обновление готово",
+      message: `Версия${ver} скачана. Установить сейчас?`,
+      detail: "Приложение будет перезапущено автоматически."
+    }).catch(() => ({ response: 1 }));
+
+    if (result.response === 0) {
+      autoUpdater.quitAndInstall();
+    }
+  });
+
+  checkForAppUpdates(false);
+
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
+  updateCheckTimer = setInterval(() => {
+    checkForAppUpdates(false);
+  }, UPDATE_CHECK_INTERVAL_MS);
+}
+
+async function checkForAppUpdates(manual = false) {
+  if (!autoUpdater) {
+    if (manual) {
+      await dialog.showMessageBox({
+        type: "warning",
+        title: "Обновление",
+        message: "Модуль обновлений не подключен. Установите зависимость electron-updater."
+      }).catch(() => {});
+    }
+    return false;
+  }
+
+  if (!app.isPackaged) {
+    if (manual) {
+      await dialog.showMessageBox({
+        type: "info",
+        title: "Обновление",
+        message: "Проверка обновлений работает только в установленной (упакованной) версии приложения."
+      }).catch(() => {});
+    }
+    return false;
+  }
+
+  manualUpdateCheck = !!manual;
+  try {
+    await autoUpdater.checkForUpdates();
+    return true;
+  } catch (error) {
+    if (manual) {
+      manualUpdateCheck = false;
+      await dialog.showMessageBox({
+        type: "error",
+        title: "Обновление",
+        message: "Не удалось проверить обновления",
+        detail: String(error?.message || error || "Неизвестная ошибка")
+      }).catch(() => {});
+    }
+    return false;
+  }
+}
+
 function getAppIconPath() {
   const rootIconPng = path.join(__dirname, "..", "icon.png");
   const buildIco = path.join(__dirname, "..", "build", "icon.ico");
@@ -992,10 +1463,11 @@ function createTray() {
   tray = new Tray(getTrayIcon());
   const menu = Menu.buildFromTemplate([
     { label: "Показать", click: () => toggleWindow() },
+    { label: "Проверить обновления", click: () => { checkForAppUpdates(true); } },
     { type: "separator" },
     { label: "Выход", click: () => app.quit() }
   ]);
-  tray.setToolTip("AI Assistant");
+  tray.setToolTip("OfficeGhost");
   tray.setContextMenu(menu);
   tray.on("click", () => toggleWindow());
 }
@@ -1048,6 +1520,222 @@ function toggleWindow() {
   mainWindow.webContents.send("focus-input");
 }
 
+
+function emitSortProgress(payload) {
+  mainWindow?.webContents.send("sort-progress", payload);
+  sortWindow?.webContents.send("sort-progress", payload);
+}
+
+function hashText(text) {
+  return crypto.createHash("sha1").update(String(text || "")).digest("hex");
+}
+
+function ensureIndexLoaded() {
+  if (!indexData?.files || !Object.keys(indexData.files).length) {
+    loadIndex();
+  }
+}
+
+function createUnionFind(size) {
+  const parent = Array.from({ length: size }, (_, i) => i);
+  const rank = Array(size).fill(0);
+
+  const find = (x) => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  };
+
+  const union = (a, b) => {
+    let ra = find(a);
+    let rb = find(b);
+    if (ra === rb) return;
+    if (rank[ra] < rank[rb]) [ra, rb] = [rb, ra];
+    parent[rb] = ra;
+    if (rank[ra] === rank[rb]) rank[ra] += 1;
+  };
+
+  return { find, union };
+}
+
+async function runDuplicateSort() {
+  ensureIndexLoaded();
+  const allowedExt = new Set([".doc", ".docx", ".xls", ".xlsx", ".pdf"]);
+  const items = Object.values(indexData.files || {}).filter((item) => {
+    if (!item || typeof item.path !== "string" || !item.path) return false;
+    const ext = String(item.ext || path.extname(item.path) || "").toLowerCase();
+    return allowedExt.has(ext);
+  });
+  const total = items.length;
+
+  sortSessionId += 1;
+  const runId = sortSessionId;
+  sortStatus = { running: true, phase: "scan", processed: 0, total, groups: 0, copies: 0, error: "" };
+  emitSortProgress({ type: "scan", processed: 0, total, groups: 0, copies: 0 });
+
+  if (!total) {
+    sortStatus = { running: false, phase: "done", processed: 0, total: 0, groups: 0, copies: 0, error: "" };
+    emitSortProgress({ type: "done", processed: 0, total: 0, groups: 0, copies: 0 });
+    return { groups: [], total: 0, copies: 0 };
+  }
+
+  const prepared = [];
+  const nameSizeMap = new Map();
+  const contentMap = new Map();
+
+  for (let i = 0; i < items.length; i += 1) {
+    if (runId !== sortSessionId) throw new Error("Сортировка была прервана");
+
+    const item = items[i];
+    const name = String(item.name || path.basename(item.path)).trim();
+    const nameLower = name.toLowerCase();
+    const size = Number(item.size || 0);
+    const text = String(item.text || "");
+
+    const entry = {
+      index: i,
+      path: item.path,
+      name,
+      size,
+      nameKey: `${nameLower}|${size}`,
+      contentKey: ""
+    };
+
+    if (entry.nameKey) {
+      if (!nameSizeMap.has(entry.nameKey)) nameSizeMap.set(entry.nameKey, []);
+      nameSizeMap.get(entry.nameKey).push(i);
+    }
+
+    if (text) {
+      entry.contentKey = hashText(text);
+      if (!contentMap.has(entry.contentKey)) contentMap.set(entry.contentKey, []);
+      contentMap.get(entry.contentKey).push(i);
+    }
+
+    prepared.push(entry);
+
+    if ((i + 1) % 200 === 0 || i + 1 === items.length) {
+      sortStatus = { ...sortStatus, phase: "scan", processed: i + 1, total };
+      emitSortProgress({ type: "scan", processed: i + 1, total, groups: 0, copies: 0 });
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
+
+  const uf = createUnionFind(prepared.length);
+  const unionBucket = (bucket) => {
+    if (!bucket || bucket.length < 2) return;
+    const first = bucket[0];
+    for (let i = 1; i < bucket.length; i += 1) {
+      uf.union(first, bucket[i]);
+    }
+  };
+
+  for (const bucket of nameSizeMap.values()) unionBucket(bucket);
+  for (const bucket of contentMap.values()) unionBucket(bucket);
+
+  const grouped = new Map();
+  for (let i = 0; i < prepared.length; i += 1) {
+    const root = uf.find(i);
+    if (!grouped.has(root)) grouped.set(root, []);
+    grouped.get(root).push(prepared[i]);
+  }
+
+  const groups = [];
+  let totalCopies = 0;
+
+  for (const list of grouped.values()) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => a.path.localeCompare(b.path, "ru"));
+
+    const original = list[0];
+    const copies = list.slice(1);
+    if (!copies.length) continue;
+
+    const nameKeys = new Map();
+    const contentKeys = new Map();
+    for (const file of list) {
+      if (file.nameKey) nameKeys.set(file.nameKey, (nameKeys.get(file.nameKey) || 0) + 1);
+      if (file.contentKey) contentKeys.set(file.contentKey, (contentKeys.get(file.contentKey) || 0) + 1);
+    }
+
+    const hasNameMatch = Array.from(nameKeys.values()).some((count) => count > 1);
+    const hasContentMatch = Array.from(contentKeys.values()).some((count) => count > 1);
+    const reason = hasNameMatch && hasContentMatch
+      ? "Совпадают название и содержимое"
+      : hasContentMatch
+        ? "Совпадает содержимое"
+        : "Похожее название и размер";
+
+    groups.push({
+      id: `dup-${groups.length + 1}`,
+      reason,
+      original: { path: original.path, name: original.name, size: original.size },
+      copies: copies.map((file) => ({ path: file.path, name: file.name, size: file.size }))
+    });
+    totalCopies += copies.length;
+  }
+
+  groups.sort((a, b) => b.copies.length - a.copies.length);
+
+  sortStatus = {
+    running: false,
+    phase: "done",
+    processed: total,
+    total,
+    groups: groups.length,
+    copies: totalCopies,
+    error: ""
+  };
+  emitSortProgress({ type: "done", processed: total, total, groups: groups.length, copies: totalCopies });
+
+  lastDuplicateResult = { groups, total, copies: totalCopies };
+  return { groups, total, copies: totalCopies };
+}
+
+function deleteDuplicateFiles(pathsToDelete) {
+  const unique = Array.from(new Set((Array.isArray(pathsToDelete) ? pathsToDelete : []).filter((p) => typeof p === "string" && p)));
+  const deleted = [];
+  const failed = [];
+
+  for (const filePath of unique) {
+    try {
+      if (!fs.existsSync(filePath)) {
+        failed.push({ path: filePath, error: "Файл не найден" });
+        continue;
+      }
+      const stat = fs.lstatSync(filePath);
+      if (!stat.isFile()) {
+        failed.push({ path: filePath, error: "Это не файл" });
+        continue;
+      }
+      fs.unlinkSync(filePath);
+      deleted.push(filePath);
+    } catch (error) {
+      failed.push({ path: filePath, error: error?.message || String(error) });
+    }
+  }
+
+  if (deleted.length) {
+    for (const key of Object.keys(indexData.files || {})) {
+      const item = indexData.files[key];
+      if (item?.path && deleted.includes(item.path)) {
+        delete indexData.files[key];
+      }
+    }
+    try {
+      fs.writeFileSync(indexPath, JSON.stringify(indexData, null, 2), "utf8");
+    } catch {
+      // ignore
+    }
+    indexStatus = { ...indexStatus, fileCount: Object.keys(indexData.files || {}).length };
+    mainWindow?.webContents.send("index-status", indexStatus);
+  }
+
+  return { deleted, failed };
+}
+
 function scheduleIndexingInterval() {
   if (indexIntervalTimer) {
     clearInterval(indexIntervalTimer);
@@ -1056,6 +1744,17 @@ function scheduleIndexingInterval() {
   const seconds = Math.max(30, Number.parseInt(settings.indexIntervalSec || 60, 10) || 60);
   indexIntervalTimer = setInterval(() => {
     if (settings.paused) return;
+    if (indexWorker || indexStatus.state === "indexing") return;
+
+    // Never auto-start full indexing again when index file already exists.
+    if (hasIndexFileOnDisk()) {
+      if (indexStatus.state !== "ready") {
+        hasSavedIndexSnapshot();
+        mainWindow?.webContents.send("index-status", indexStatus);
+      }
+      return;
+    }
+
     if (indexStatus.state === "idle" || indexStatus.state === "error") {
       startIndexing();
     }
@@ -1076,10 +1775,12 @@ app.whenReady().then(() => {
   }
   createWindow();
   createTray();
+  initAutoUpdater();
 
   indexPath = path.join(app.getPath("userData"), "index.json");
   settingsPath = path.join(app.getPath("userData"), "settings.json");
   aiStatePath = path.join(app.getPath("userData"), "ai-state.json");
+  migrateLegacyUserData();
   loadSettings();
   loadAiStatus();
   syncAiModelFromSettings();
@@ -1087,8 +1788,16 @@ app.whenReady().then(() => {
   registerHotkey();
   loadIndex();
   loadReport();
-  const hasIndex = indexData?.files && Object.keys(indexData.files).length > 0;
-  if (!settings.paused && !hasIndex) startIndexing();
+  const hasIndex = hasSavedIndexSnapshot() || hasIndexFileOnDisk() || (indexData?.files && Object.keys(indexData.files).length > 0);
+  if (!settings.paused && !hasIndex) {
+    startIndexing();
+  } else if (hasIndex) {
+    if (!indexData?.files || !Object.keys(indexData.files).length) {
+      hasSavedIndexSnapshot();
+    }
+    indexStatus = { ...indexStatus, state: "ready", fileCount: Object.keys(indexData.files || {}).length };
+    mainWindow?.webContents.send("index-status", indexStatus);
+  }
   scheduleIndexingInterval();
 
   app.setLoginItemSettings({ openAtLogin: true });
@@ -1120,6 +1829,27 @@ ipcMain.handle("open-in-folder", async (_event, filePath) => {
   shell.showItemInFolder(filePath);
   return true;
 });
+
+ipcMain.handle("open-sort-window", async () => {
+  createSortWindow();
+  if (sortWindow && sortWindow.webContents.isLoading()) {
+    sortWindow.webContents.once("did-finish-load", () => {
+      sortWindow?.webContents.send("sort-opened", { ts: Date.now() });
+    });
+  } else {
+    sortWindow?.webContents.send("sort-opened", { ts: Date.now() });
+  }
+  return true;
+});
+
+ipcMain.handle("close-sort-window", async () => {
+  if (sortWindow && !sortWindow.isDestroyed()) {
+    sortWindow.close();
+  }
+  return true;
+});
+
+ipcMain.handle("get-duplicate-result", async () => lastDuplicateResult);
 
 ipcMain.handle("open-settings", async () => {
   createSettingsWindow();
@@ -1204,10 +1934,17 @@ ipcMain.handle("get-ai-status", async () => aiStatus);
 
 ipcMain.handle("ask-ai", async (_event, query, filePaths) => {
   const q = String(query || "").trim();
+  const attached = Array.isArray(filePaths) ? filePaths : [];
   if (!q) return { ok: false, error: "Пустой запрос" };
 
   try {
-    const answer = await askLocalAi(q, Array.isArray(filePaths) ? filePaths : []);
+    const moveResult = await tryHandleMoveRequest(q, attached);
+    if (moveResult.handled) {
+      if (!moveResult.ok) return { ok: false, error: moveResult.message };
+      return { ok: true, answer: moveResult.message, moved: moveResult.moved || [], model: getSelectedModel() };
+    }
+
+    const answer = await askLocalAi(q, attached);
     return { ok: true, answer, model: getSelectedModel() };
   } catch (error) {
     return { ok: false, error: error?.message || String(error) };
@@ -1321,4 +2058,28 @@ ipcMain.handle("refresh-index", async () => {
   saveSettings();
   startIndexing();
   return indexStatus;
+});
+
+ipcMain.handle("start-duplicate-sort", async () => {
+  if (sortStatus.running) {
+    return { ok: false, error: "Сортировка уже выполняется" };
+  }
+
+  try {
+    const result = await runDuplicateSort();
+    return { ok: true, ...result };
+  } catch (error) {
+    sortStatus = { ...sortStatus, running: false, phase: "error", error: error?.message || String(error) };
+    emitSortProgress({ type: "error", message: sortStatus.error });
+    return { ok: false, error: sortStatus.error };
+  }
+});
+
+ipcMain.handle("delete-duplicate-files", async (_event, pathsToDelete) => {
+  try {
+    const result = deleteDuplicateFiles(pathsToDelete);
+    return { ok: true, ...result };
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error) };
+  }
 });

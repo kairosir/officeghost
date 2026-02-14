@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Сортировка файлов</title>
+    <link rel="stylesheet" href="./sort.css" />
+  </head>
+  <body>
+    <div class="overlay">
+      <div class="search-box">
+        <div class="toolbar">
+          <div class="title">Сортировка файлов</div>
+          <div class="actions">
+            <button id="window-close" class="icon-btn text-btn" title="Закрыть (Esc)">×</button>
+          </div>
+        </div>
+
+        <div class="card-wrap">
+          <div id="warning" class="card">
+            <h2>Сортировка файлов</h2>
+            <p>
+              Перед запуском закрой все документы и не открывай файлы до завершения сортировки.
+              Сортировка работает только с файлами Word (DOC/DOCX), Excel (XLS/XLSX), PDF.
+              На этапе анализа ассистент ничего не удаляет и не изменяет.
+            </p>
+            <div class="actions body-actions">
+              <button id="start" class="btn primary">Начать</button>
+            </div>
+          </div>
+
+          <div id="progress" class="card hidden">
+            <h2>Анализ файлов</h2>
+            <div id="progress-text">Подготовка...</div>
+            <div class="bar"><div id="progress-fill" class="fill"></div></div>
+          </div>
+
+          <div id="results" class="card hidden">
+            <div class="top-row">
+              <h2>Похожие файлы</h2>
+              <input id="search" type="text" placeholder="Поиск по найденным копиям..." />
+            </div>
+            <div id="summary" class="summary"></div>
+            <div class="actions body-actions">
+              <button id="delete-selected" class="btn">Удалить выбранные копии</button>
+              <button id="delete-all" class="btn danger">Удалить все копии</button>
+            </div>
+
+            <div id="table" class="table" style="--c-check:120px; --c-file:260px; --c-path:1fr; --c-match:220px; --c-size:130px; --c-open:70px;">
+              <div class="thead">
+                <div class="cell check-head"><input id="select-all" type="checkbox" checked /> <span>Выбрать</span></div>
+                <div class="cell head-resizable" data-col="file">Файл<div class="resizer"></div></div>
+                <div class="cell head-resizable" data-col="path">Путь<div class="resizer"></div></div>
+                <div class="cell head-resizable" data-col="match">Совпадает по<div class="resizer"></div></div>
+                <div class="cell head-resizable right" data-col="size">Размер<div class="resizer"></div></div>
+                <div class="cell center">Папка</div>
+              </div>
+              <div id="tbody" class="tbody"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="./sort.js"></script>
+  </body>
+</html>

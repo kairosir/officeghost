@@ -353,7 +353,7 @@ fn set_and_emit_status(app: &tauri::AppHandle, state: &AppState, payload: Value)
   let _ = app.emit("index-status", payload);
 }
 
-fn find_rust_indexer_path() -> Option<PathBuf> {
+fn find_rust_indexer_path(app: &tauri::AppHandle) -> Option<PathBuf> {
   if let Ok(p) = std::env::var("RUST_INDEXER") {
     let pb = PathBuf::from(p);
     if pb.exists() {
@@ -369,6 +369,24 @@ fn find_rust_indexer_path() -> Option<PathBuf> {
     candidates.push(cwd.join("../rust-indexer/target/debug").join(bin));
     candidates.push(cwd.join("rust-indexer/target/release").join(bin));
     candidates.push(cwd.join("rust-indexer/target/debug").join(bin));
+  }
+
+  if let Ok(resource_dir) = app.path().resource_dir() {
+    candidates.push(resource_dir.join("rust-indexer"));
+    candidates.push(resource_dir.join("rust-indexer.exe"));
+    candidates.push(resource_dir.join("release").join("rust-indexer"));
+    candidates.push(resource_dir.join("release").join("rust-indexer.exe"));
+    candidates.push(resource_dir.join("_up_").join("rust-indexer").join("target").join("release").join("rust-indexer"));
+    candidates.push(resource_dir.join("_up_").join("rust-indexer").join("target").join("release").join("rust-indexer.exe"));
+  }
+
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(parent) = exe.parent() {
+      candidates.push(parent.join("rust-indexer"));
+      candidates.push(parent.join("rust-indexer.exe"));
+      candidates.push(parent.join("release").join("rust-indexer"));
+      candidates.push(parent.join("release").join("rust-indexer.exe"));
+    }
   }
 
   for c in candidates {
@@ -421,7 +439,7 @@ fn start_indexing_internal(app: &tauri::AppHandle, state: &AppState, force_resta
     return err;
   }
 
-  let Some(indexer_bin) = find_rust_indexer_path() else {
+  let Some(indexer_bin) = find_rust_indexer_path(app) else {
     let err = json!({"state":"error","lastError": if ru { "Не найден rust-indexer" } else { "rust-indexer was not found" }});
     set_and_emit_status(app, state, err.clone());
     return err;
@@ -1376,6 +1394,17 @@ async fn check_app_update_internal(app: &tauri::AppHandle, state: &AppState, man
       } else {
         format!("Updater module is not configured: {}", e)
       };
+      if !manual {
+        return set_and_emit_update_status(app, state, json!({
+          "state": "idle",
+          "available": false,
+          "version": "",
+          "downloading": false,
+          "installed": false,
+          "error": "",
+          "manual": false
+        }));
+      }
       return set_and_emit_update_status(app, state, json!({
         "state": "error",
         "available": false,
@@ -1418,6 +1447,17 @@ async fn check_app_update_internal(app: &tauri::AppHandle, state: &AppState, man
       } else {
         format!("Failed to check updates: {}", e)
       };
+      if !manual {
+        return set_and_emit_update_status(app, state, json!({
+          "state": "idle",
+          "available": false,
+          "version": "",
+          "downloading": false,
+          "installed": false,
+          "error": "",
+          "manual": false
+        }));
+      }
       set_and_emit_update_status(app, state, json!({
         "state": "error",
         "available": false,
@@ -1906,11 +1946,25 @@ fn search(app: tauri::AppHandle, state: State<'_, AppState>, query: String) -> V
     let snippet = if tl.is_empty() {
       "".to_string()
     } else if let Some(i) = tl.find(&q) {
-      let start = i.saturating_sub(60);
-      let end = (i + q.len() + 100).min(text.len());
-      text.get(start..end).unwrap_or(text).replace('\n', " ")
+      let mut start = i.saturating_sub(80);
+      let mut end = (i + q.len() + 140).min(text.len());
+      while start > 0 && !text.is_char_boundary(start) {
+        start -= 1;
+      }
+      while end > start && !text.is_char_boundary(end) {
+        end -= 1;
+      }
+      let mut out = text
+        .get(start..end)
+        .unwrap_or("")
+        .replace('\n', " ")
+        .replace('\r', " ");
+      if out.chars().count() > 200 {
+        out = out.chars().take(200).collect::<String>();
+      }
+      out
     } else {
-      text.chars().take(160).collect::<String>()
+      text.chars().take(160).collect::<String>().replace('\n', " ").replace('\r', " ")
     };
 
     out.push((

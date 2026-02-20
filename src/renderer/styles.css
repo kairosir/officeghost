@@ -33,6 +33,16 @@ body {
   overflow: hidden;
 }
 
+body.settings-window {
+  background: var(--bg);
+}
+
+body.settings-window .overlay {
+  padding: 10px;
+  background: transparent;
+  border: none;
+}
+
 .overlay {
   width: 100%;
   height: 100%;
@@ -170,11 +180,25 @@ body {
 .result-path {
   font-size: 11px;
   color: var(--muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .result-snippet {
   font-size: 12px;
   color: var(--muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .highlight {

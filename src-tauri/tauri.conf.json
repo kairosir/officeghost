@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "OfficeGhost",
   "version": "0.1.0",
-  "identifier": "com.officeghost.app",
+  "identifier": "com.officeghost.desktop",
   "build": {
     "frontendDist": "../src/renderer"
   },
@@ -26,6 +26,7 @@
     "security": {
       "csp": null
     },
+    "macOSPrivateApi": true,
     "withGlobalTauri": true
   },
   "plugins": {
@@ -41,6 +42,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "../rust-indexer/target/release"
+    ],
     "windows": {
       "nsis": {
         "languages": [

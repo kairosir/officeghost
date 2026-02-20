@@ -12,7 +12,7 @@ html, body { height: 100%; }
 
 body {
   margin: 0;
-  background: transparent;
+  background: var(--bg);
   color: var(--text);
   font-family: "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
   overflow: hidden;

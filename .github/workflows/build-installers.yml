@@ -48,6 +48,9 @@ jobs:
           rustc -V
           cargo -V
 
+      - name: Build rust-indexer sidecar
+        run: cargo build --manifest-path rust-indexer/Cargo.toml --release
+
       - name: Build Tauri app
         run: npx tauri build --bundles ${{ matrix.tauri_bundles }}
 

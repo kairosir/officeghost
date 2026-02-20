@@ -10,7 +10,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+  Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+  menu::{MenuBuilder, MenuItemBuilder},
+  tray::{TrayIconBuilder, TrayIconEvent}
+};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_updater::UpdaterExt;
 
@@ -467,6 +471,12 @@ fn start_indexing_internal(app: &tauri::AppHandle, state: &AppState, force_resta
   } else {
     command.env("INDEXER_UNLIMITED", "0");
   }
+  #[cfg(target_os = "windows")]
+  {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW);
+  }
 
   let mut child = match command.spawn() {
     Ok(c) => c,
@@ -626,12 +636,18 @@ fn run_command_capture(command: &str, args: &[&str]) -> (i32, String, String) {
 }
 
 fn run_command_capture_timeout(command: &str, args: &[&str], timeout: Duration) -> (i32, String, String) {
-  let mut child = match Command::new(command)
+  let mut cmd = Command::new(command);
+  cmd
     .args(args)
     .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .spawn()
+    .stderr(Stdio::piped());
+  #[cfg(target_os = "windows")]
   {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+  }
+  let mut child = match cmd.spawn() {
     Ok(c) => c,
     Err(e) => return (-1, "".to_string(), e.to_string()),
   };
@@ -1647,6 +1663,50 @@ fn toggle_main_window(app: &tauri::AppHandle) {
   }
 }
 
+fn setup_tray(app: &tauri::AppHandle) -> Result<(), String> {
+  let label_open = if is_ru(app) { "Показать/Скрыть" } else { "Show/Hide" };
+  let label_quit = if is_ru(app) { "Выйти" } else { "Quit" };
+
+  let open_item = MenuItemBuilder::with_id("tray_open", label_open)
+    .build(app)
+    .map_err(|e| format!("tray menu open item: {e}"))?;
+  let quit_item = MenuItemBuilder::with_id("tray_quit", label_quit)
+    .build(app)
+    .map_err(|e| format!("tray menu quit item: {e}"))?;
+  let menu = MenuBuilder::new(app)
+    .items(&[&open_item, &quit_item])
+    .build()
+    .map_err(|e| format!("tray menu build: {e}"))?;
+
+  let icon = app.default_window_icon().cloned();
+  let mut tray_builder = TrayIconBuilder::new()
+    .menu(&menu)
+    .on_menu_event(move |app, event| match event.id.as_ref() {
+      "tray_open" => toggle_main_window(app),
+      "tray_quit" => app.exit(0),
+      _ => {}
+    })
+    .on_tray_icon_event(move |tray, event| {
+      if let TrayIconEvent::Click { button, button_state, .. } = event {
+        if button == tauri::tray::MouseButton::Left
+          && button_state == tauri::tray::MouseButtonState::Up
+        {
+          toggle_main_window(tray.app_handle());
+        }
+      }
+    });
+
+  if let Some(ic) = icon {
+    tray_builder = tray_builder.icon(ic);
+  }
+
+  tray_builder
+    .build(app)
+    .map_err(|e| format!("tray build: {e}"))?;
+
+  Ok(())
+}
+
 fn apply_hotkey(app: &tauri::AppHandle, hotkey: &str) -> Result<(), String> {
   let hk = normalize_hotkey_value(hotkey);
   let manager = app.global_shortcut();
@@ -2643,6 +2703,7 @@ pub fn run() {
 
       let settings = load_settings_internal(&app.handle().clone());
       let _ = apply_hotkey(&app.handle().clone(), &settings.hotkey);
+      let _ = setup_tray(&app.handle().clone());
 
       if let Ok(mut last) = state.last_schedule_run.lock() {
         *last = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;

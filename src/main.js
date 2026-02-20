@@ -1214,18 +1214,35 @@ function centerWithSettings() {
   settingsWindow.setPosition(x + mainBounds.width + gap, y, false);
 }
 
+function placeSortWindowBelowMain() {
+  if (!sortWindow || !mainWindow) return;
+
+  const mainBounds = mainWindow.getBounds();
+  const sortBounds = sortWindow.getBounds();
+  const display = screen.getDisplayMatching(mainBounds).workArea;
+
+  const x = Math.max(display.x, Math.min(mainBounds.x, display.x + display.width - sortBounds.width));
+  const yPreferred = mainBounds.y + mainBounds.height + 8;
+  const y = Math.max(display.y, Math.min(yPreferred, display.y + display.height - sortBounds.height));
+
+  sortWindow.setPosition(x, y, false);
+}
+
 function createSortWindow() {
   if (sortWindow) {
+    placeSortWindowBelowMain();
     sortWindow.show();
     sortWindow.focus();
     return;
   }
 
+  const mainWidth = mainWindow ? mainWindow.getBounds().width : 780;
+
   sortWindow = new BrowserWindow({
-    width: 980,
-    height: 640,
-    minWidth: 860,
-    minHeight: 500,
+    width: Math.max(700, Math.min(900, mainWidth)),
+    height: 245,
+    minWidth: 700,
+    minHeight: 220,
     show: false,
     frame: false,
     transparent: true,
@@ -1245,7 +1262,10 @@ function createSortWindow() {
   });
 
   sortWindow.loadFile(path.join(__dirname, "renderer", "sort.html"));
-  sortWindow.once("ready-to-show", () => sortWindow?.show());
+  sortWindow.once("ready-to-show", () => {
+    placeSortWindowBelowMain();
+    sortWindow?.show();
+  });
   sortWindow.on("closed", () => {
     sortWindow = null;
   });
@@ -1560,124 +1580,152 @@ function createUnionFind(size) {
   return { find, union };
 }
 
+function sanitizeSortLabel(label) {
+  const raw = String(label || "").trim();
+  const cleaned = raw
+    .replace(/[\/:*?"<>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "Без темы";
+  return cleaned.slice(0, 42);
+}
+
+function pickSortLabel(fileItem) {
+  const name = String(fileItem?.name || "").replace(/\.[^.]+$/, " ");
+  const text = String(fileItem?.text || "").slice(0, 1200);
+  const merged = `${name} ${text}`.toLowerCase();
+  const tokens = (merged.match(/[\p{L}\p{N}_-]{3,}/gu) || [])
+    .map((x) => normalizeToken(x))
+    .filter((x) => x && x.length >= 3)
+    .filter((x) => !RU_STOPWORDS.has(x));
+
+  if (!tokens.length) {
+    const fallback = name.trim();
+    return sanitizeSortLabel(fallback || "Без темы");
+  }
+
+  const freq = new Map();
+  for (const tok of tokens) freq.set(tok, (freq.get(tok) || 0) + 1);
+  const best = Array.from(freq.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "Без темы";
+  return sanitizeSortLabel(best);
+}
+
+function pickRootForFile(filePath, roots) {
+  const normalized = String(filePath || "").toLowerCase();
+  const sorted = [...roots].sort((a, b) => b.length - a.length);
+  for (const root of sorted) {
+    const rootNorm = String(root || "").toLowerCase();
+    if (normalized === rootNorm || normalized.startsWith(rootNorm + path.sep.toLowerCase())) {
+      return root;
+    }
+  }
+  return sorted[0] || null;
+}
+
 async function runDuplicateSort() {
   ensureIndexLoaded();
-  const allowedExt = new Set([".doc", ".docx", ".xls", ".xlsx", ".pdf"]);
+
+  let roots = settings.roots?.length ? settings.roots : getDefaultRoots();
+  roots = normalizeRoots(roots);
+  roots = mergeRoots(roots, getCoreRoots());
+  if (!roots.length) roots = getDefaultRoots();
+
   const items = Object.values(indexData.files || {}).filter((item) => {
     if (!item || typeof item.path !== "string" || !item.path) return false;
-    const ext = String(item.ext || path.extname(item.path) || "").toLowerCase();
-    return allowedExt.has(ext);
+    if (!fs.existsSync(item.path)) return false;
+    try {
+      return fs.lstatSync(item.path).isFile();
+    } catch {
+      return false;
+    }
   });
-  const total = items.length;
 
-  sortSessionId += 1;
-  const runId = sortSessionId;
+  const total = items.length;
   sortStatus = { running: true, phase: "scan", processed: 0, total, groups: 0, copies: 0, error: "" };
   emitSortProgress({ type: "scan", processed: 0, total, groups: 0, copies: 0 });
 
   if (!total) {
     sortStatus = { running: false, phase: "done", processed: 0, total: 0, groups: 0, copies: 0, error: "" };
     emitSortProgress({ type: "done", processed: 0, total: 0, groups: 0, copies: 0 });
-    return { groups: [], total: 0, copies: 0 };
+    return { mode: "organized", groups: [], total: 0, copies: 0, moved: 0, folders: 0, skipped: 0 };
   }
 
-  const prepared = [];
-  const nameSizeMap = new Map();
-  const contentMap = new Map();
+  const grouped = new Map();
+  let movedPairs = [];
+  let movedCount = 0;
+  let skippedCount = 0;
 
   for (let i = 0; i < items.length; i += 1) {
-    if (runId !== sortSessionId) throw new Error("Сортировка была прервана");
-
     const item = items[i];
-    const name = String(item.name || path.basename(item.path)).trim();
-    const nameLower = name.toLowerCase();
-    const size = Number(item.size || 0);
-    const text = String(item.text || "");
+    const src = item.path;
 
-    const entry = {
-      index: i,
-      path: item.path,
-      name,
-      size,
-      nameKey: `${nameLower}|${size}`,
-      contentKey: ""
-    };
-
-    if (entry.nameKey) {
-      if (!nameSizeMap.has(entry.nameKey)) nameSizeMap.set(entry.nameKey, []);
-      nameSizeMap.get(entry.nameKey).push(i);
+    if (/OfficeGhost_Sorted/i.test(src)) {
+      skippedCount += 1;
+      continue;
     }
 
-    if (text) {
-      entry.contentKey = hashText(text);
-      if (!contentMap.has(entry.contentKey)) contentMap.set(entry.contentKey, []);
-      contentMap.get(entry.contentKey).push(i);
+    const root = pickRootForFile(src, roots);
+    if (!root) {
+      skippedCount += 1;
+      continue;
     }
 
-    prepared.push(entry);
+    const label = pickSortLabel(item);
+    const sortedBase = path.join(root, "OfficeGhost_Sorted");
+    const destDir = path.join(sortedBase, label);
 
-    if ((i + 1) % 200 === 0 || i + 1 === items.length) {
+    try {
+      fs.mkdirSync(destDir, { recursive: true });
+      const to = moveFileAtomic(src, destDir);
+      movedPairs.push({ from: src, to });
+      movedCount += 1;
+
+      const key = `${root}::${label}`;
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          root,
+          label,
+          targetFolder: destDir,
+          files: []
+        });
+      }
+      grouped.get(key).files.push({ from: src, to, size: Number(item.size || 0) });
+    } catch {
+      skippedCount += 1;
+    }
+
+    if ((i + 1) % 40 === 0 || i === items.length - 1) {
       sortStatus = { ...sortStatus, phase: "scan", processed: i + 1, total };
-      emitSortProgress({ type: "scan", processed: i + 1, total, groups: 0, copies: 0 });
+      emitSortProgress({ type: "scan", processed: i + 1, total, groups: grouped.size, copies: movedCount });
       await new Promise((resolve) => setImmediate(resolve));
     }
   }
 
-  const uf = createUnionFind(prepared.length);
-  const unionBucket = (bucket) => {
-    if (!bucket || bucket.length < 2) return;
-    const first = bucket[0];
-    for (let i = 1; i < bucket.length; i += 1) {
-      uf.union(first, bucket[i]);
-    }
-  };
-
-  for (const bucket of nameSizeMap.values()) unionBucket(bucket);
-  for (const bucket of contentMap.values()) unionBucket(bucket);
-
-  const grouped = new Map();
-  for (let i = 0; i < prepared.length; i += 1) {
-    const root = uf.find(i);
-    if (!grouped.has(root)) grouped.set(root, []);
-    grouped.get(root).push(prepared[i]);
+  if (movedPairs.length) {
+    updateIndexAfterMove(movedPairs);
   }
 
-  const groups = [];
-  let totalCopies = 0;
-
-  for (const list of grouped.values()) {
-    if (list.length < 2) continue;
-    list.sort((a, b) => a.path.localeCompare(b.path, "ru"));
-
-    const original = list[0];
-    const copies = list.slice(1);
-    if (!copies.length) continue;
-
-    const nameKeys = new Map();
-    const contentKeys = new Map();
-    for (const file of list) {
-      if (file.nameKey) nameKeys.set(file.nameKey, (nameKeys.get(file.nameKey) || 0) + 1);
-      if (file.contentKey) contentKeys.set(file.contentKey, (contentKeys.get(file.contentKey) || 0) + 1);
-    }
-
-    const hasNameMatch = Array.from(nameKeys.values()).some((count) => count > 1);
-    const hasContentMatch = Array.from(contentKeys.values()).some((count) => count > 1);
-    const reason = hasNameMatch && hasContentMatch
-      ? "Совпадают название и содержимое"
-      : hasContentMatch
-        ? "Совпадает содержимое"
-        : "Похожее название и размер";
-
-    groups.push({
-      id: `dup-${groups.length + 1}`,
-      reason,
-      original: { path: original.path, name: original.name, size: original.size },
-      copies: copies.map((file) => ({ path: file.path, name: file.name, size: file.size }))
-    });
-    totalCopies += copies.length;
-  }
-
-  groups.sort((a, b) => b.copies.length - a.copies.length);
+  const groups = Array.from(grouped.values())
+    .map((g, idx) => {
+      const sortedFiles = [...g.files].sort((a, b) => String(a.to).localeCompare(String(b.to), "ru"));
+      const first = sortedFiles[0];
+      return {
+        id: `sort-${idx + 1}`,
+        reason: `Папка: ${g.label}`,
+        original: {
+          path: g.targetFolder,
+          name: g.targetFolder,
+          size: sortedFiles.reduce((acc, x) => acc + Number(x.size || 0), 0)
+        },
+        copies: sortedFiles.map((x) => ({
+          path: x.to,
+          name: path.basename(x.to),
+          size: x.size,
+          from: x.from
+        }))
+      };
+    })
+    .sort((a, b) => (b.copies?.length || 0) - (a.copies?.length || 0));
 
   sortStatus = {
     running: false,
@@ -1685,13 +1733,13 @@ async function runDuplicateSort() {
     processed: total,
     total,
     groups: groups.length,
-    copies: totalCopies,
+    copies: movedCount,
     error: ""
   };
-  emitSortProgress({ type: "done", processed: total, total, groups: groups.length, copies: totalCopies });
 
-  lastDuplicateResult = { groups, total, copies: totalCopies };
-  return { groups, total, copies: totalCopies };
+  emitSortProgress({ type: "done", processed: total, total, groups: groups.length, copies: movedCount });
+  lastDuplicateResult = { mode: "organized", groups, total, copies: movedCount, moved: movedCount, folders: groups.length, skipped: skippedCount };
+  return lastDuplicateResult;
 }
 
 function deleteDuplicateFiles(pathsToDelete) {
@@ -1846,6 +1894,15 @@ ipcMain.handle("close-sort-window", async () => {
   if (sortWindow && !sortWindow.isDestroyed()) {
     sortWindow.close();
   }
+  return true;
+});
+
+ipcMain.handle("resize-sort-window", async (_event, width, height) => {
+  if (!sortWindow || sortWindow.isDestroyed()) return false;
+  const bounds = sortWindow.getBounds();
+  const w = Math.max(700, Math.min(1400, Number(width) || bounds.width));
+  const h = Math.max(220, Math.min(1000, Number(height) || bounds.height));
+  sortWindow.setBounds({ x: bounds.x, y: bounds.y, width: w, height: h }, false);
   return true;
 });
 

@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("assistantApi", {
   removeAi: () => ipcRenderer.invoke("remove-ai"),
   openSortWindow: () => ipcRenderer.invoke("open-sort-window"),
   closeSortWindow: () => ipcRenderer.invoke("close-sort-window"),
+  resizeSortWindow: (width, height) => ipcRenderer.invoke("resize-sort-window", width, height),
   getDuplicateResult: () => ipcRenderer.invoke("get-duplicate-result"),
   startDuplicateSort: () => ipcRenderer.invoke("start-duplicate-sort"),
   deleteDuplicateFiles: (paths) => ipcRenderer.invoke("delete-duplicate-files", paths),

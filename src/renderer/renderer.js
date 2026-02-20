@@ -9,8 +9,10 @@ const noResultsEl = document.getElementById("no-results");
 const btnToggle = document.getElementById("btn-toggle");
 const btnSettings = document.getElementById("btn-settings");
 const btnAiMode = document.getElementById("btn-ai-mode");
+const btnAppUpdate = document.getElementById("btn-app-update");
 const btnClose = document.getElementById("btn-close");
 const btnSend = document.getElementById("btn-send");
+const toolbarEl = document.querySelector(".toolbar");
 const sortModalEl = document.getElementById("sort-modal");
 const sortCardEl = document.getElementById("sort-card");
 const sortDragEl = document.getElementById("sort-drag");
@@ -44,12 +46,222 @@ let settings = { rememberQuery: true, rememberPos: false, unlimitedIndexing: fal
 let currentQuery = "";
 let lastQuery = "";
 let throttleUntil = 0;
+let throttleTimer = null;
 let duplicateGroups = [];
 let sortRunning = false;
 let sortWindowDrag = null;
 let sortSearchQuery = "";
+let aiStatusErrorTimer = null;
+let aiResponseErrorTimer = null;
+let lastAiAnswerHtml = "";
+let currentLanguage = "ru";
+let appUpdateStatus = { state: "idle", available: false, version: "", downloading: false, installed: false, error: "" };
 
 const filterLabels = { docx: "Word", pdf: "PDF", xlsx: "Excel", txt: "Text", md: "Markdown" };
+
+const I18N = {
+  ru: {
+    aiMode: "ИИ",
+    aiModeTitle: "Режим ИИ",
+    settings: "Настройки",
+    refresh: "Обновить",
+    close: "Закрыть",
+    searchPlaceholder: "Искать файлы, заметки, проекты...",
+    aiPlaceholder: "Напиши задачу по файлам...",
+    send: "Отправить",
+    sendTitle: "Отправить (Enter)",
+    noResults: "Результатов нет",
+    indexing: "Индексация...",
+    ready: "Индекс готов. Файлов:",
+    paused: "Индексация на паузе",
+    indexError: "Ошибка индексации",
+    pause: "Пауза",
+    limit: "лимит 400 / 1.5 мин",
+    unlimited: "без лимита",
+    fileOps: "Работа с файлами",
+    aiInstalled: "ИИ установлен",
+    aiNotInstalled: "ИИ не установлен",
+    aiInstall: "Установить ИИ",
+    aiRemove: "Удалить",
+    aiThinking: "Думаю...",
+    aiQueryError: "Ошибка запроса",
+    dragFiles: "Перетащи сюда файлы для ИИ",
+    createdFile: "Создан файл:",
+    open: "Открыть",
+    folder: "Папка",
+    sortTitle: "Сортировка файлов",
+    sortBeforeStart: "Перед запуском",
+    sortBeforeText: "Перед запуском закрой все документы и не открывай файлы до завершения сортировки.\nСейчас сортировка работает только с файлами: Word (DOC/DOCX), Excel (XLS/XLSX), PDF.\nНа этапе анализа ассистент ничего не удаляет и не изменяет. После анализа ты сам выбираешь, какие копии удалить.",
+    cancel: "Отмена",
+    start: "Начать",
+    sortingInProgress: "Сортировка выполняется",
+    duplicateFiles: "Похожие файлы",
+    searchCopies: "Поиск по найденным копиям...",
+    copySizeTotal: "Общий размер копий:",
+    deleteSelectedCopies: "Удалить выбранные копии",
+    deleteAllCopies: "Удалить все копии",
+    select: "Выбрать",
+    file: "Файл",
+    path: "Путь",
+    matchBy: "Совпадает по",
+    original: "Оригинал",
+    group: "Группа",
+    analyzingFiles: "Анализ файлов...",
+    sortError: "Ошибка сортировки",
+    deleteError: "Ошибка удаления"
+    ,
+    showInFolder: "Показать в папке",
+    similar: "Похожие",
+    deleted: "Удалено",
+    errors: "Ошибок",
+    done: "Завершено"
+    ,
+    updateApp: "Обновить",
+    updateAvailable: "Доступно обновление",
+    updateDownloading: "Загрузка обновления...",
+    updateInstalled: "Обновление установлено. Перезапуск...",
+    updateCheckError: "Ошибка проверки обновлений"
+  },
+  en: {
+    aiMode: "AI",
+    aiModeTitle: "AI mode",
+    settings: "Settings",
+    refresh: "Refresh",
+    close: "Close",
+    searchPlaceholder: "Search files, notes, projects...",
+    aiPlaceholder: "Describe your task with files...",
+    send: "Send",
+    sendTitle: "Send (Enter)",
+    noResults: "No results",
+    indexing: "Indexing...",
+    ready: "Index ready. Files:",
+    paused: "Indexing paused",
+    indexError: "Indexing error",
+    pause: "Pause",
+    limit: "limit 400 / 1.5 min",
+    unlimited: "unlimited",
+    fileOps: "File tools",
+    aiInstalled: "AI installed",
+    aiNotInstalled: "AI not installed",
+    aiInstall: "Install AI",
+    aiRemove: "Remove",
+    aiThinking: "Thinking...",
+    aiQueryError: "Request error",
+    dragFiles: "Drop files here for AI",
+    createdFile: "Created file:",
+    open: "Open",
+    folder: "Folder",
+    sortTitle: "File sorting",
+    sortBeforeStart: "Before start",
+    sortBeforeText: "Before start, close all documents and do not open files until sorting finishes.\nSorting currently works only with: Word (DOC/DOCX), Excel (XLS/XLSX), PDF.\nDuring analysis, the assistant does not delete or modify files. After analysis, you choose which duplicates to remove.",
+    cancel: "Cancel",
+    start: "Start",
+    sortingInProgress: "Sorting in progress",
+    duplicateFiles: "Similar files",
+    searchCopies: "Search in found duplicates...",
+    copySizeTotal: "Total duplicate size:",
+    deleteSelectedCopies: "Delete selected copies",
+    deleteAllCopies: "Delete all copies",
+    select: "Select",
+    file: "File",
+    path: "Path",
+    matchBy: "Match by",
+    original: "Original",
+    group: "Group",
+    analyzingFiles: "Analyzing files...",
+    sortError: "Sort error",
+    deleteError: "Delete error",
+    showInFolder: "Show in folder",
+    similar: "Similar",
+    deleted: "Deleted",
+    errors: "Errors",
+    done: "Done"
+    ,
+    updateApp: "Update",
+    updateAvailable: "Update available",
+    updateDownloading: "Downloading update...",
+    updateInstalled: "Update installed. Restarting...",
+    updateCheckError: "Update check error"
+  }
+};
+
+function tr(key) {
+  return (I18N[currentLanguage] && I18N[currentLanguage][key]) || I18N.ru[key] || key;
+}
+
+function detectDefaultLanguage() {
+  const n = (navigator.language || "en").toLowerCase();
+  return n.startsWith("ru") ? "ru" : "en";
+}
+
+function applyLanguageUI() {
+  const settingsBtn = document.getElementById("btn-settings");
+  const toggleBtn = document.getElementById("btn-toggle");
+  const closeBtn = document.getElementById("btn-close");
+  const settingsIcon = document.getElementById("btn-settings-icon");
+  const toggleIcon = document.getElementById("btn-toggle-icon");
+  if (btnAiMode) {
+    btnAiMode.textContent = tr("aiMode");
+    btnAiMode.title = tr("aiModeTitle");
+    btnAiMode.setAttribute("aria-label", tr("aiModeTitle"));
+  }
+  if (btnAppUpdate) {
+    btnAppUpdate.textContent = tr("updateApp");
+  }
+  if (settingsBtn) {
+    settingsBtn.title = tr("settings");
+    settingsBtn.setAttribute("aria-label", tr("settings"));
+  }
+  if (toggleBtn) {
+    toggleBtn.title = tr("refresh");
+    toggleBtn.setAttribute("aria-label", tr("refresh"));
+  }
+  if (closeBtn) {
+    closeBtn.title = tr("close");
+    closeBtn.setAttribute("aria-label", tr("close"));
+  }
+  if (settingsIcon) settingsIcon.alt = tr("settings");
+  if (toggleIcon) toggleIcon.alt = tr("refresh");
+  if (btnSend) {
+    btnSend.textContent = tr("send");
+    btnSend.title = tr("sendTitle");
+  }
+  if (noResultsEl) noResultsEl.textContent = tr("noResults");
+  const sortDragTitle = document.getElementById("sort-drag-title");
+  const sortWarningTitle = document.getElementById("sort-warning-title");
+  const sortWarningText = document.getElementById("sort-warning-text");
+  const sortProgressTitle = document.getElementById("sort-progress-title");
+  const sortResultsTitle = document.getElementById("sort-results-title");
+  if (sortDragTitle) sortDragTitle.textContent = tr("sortTitle");
+  if (sortWarningTitle) sortWarningTitle.textContent = tr("sortBeforeStart");
+  if (sortWarningText) sortWarningText.innerHTML = escapeHtml(tr("sortBeforeText")).replace(/\n/g, "<br/>");
+  if (sortProgressTitle) sortProgressTitle.textContent = tr("sortingInProgress");
+  if (sortResultsTitle) sortResultsTitle.textContent = tr("duplicateFiles");
+  if (sortSearchEl) sortSearchEl.placeholder = tr("searchCopies");
+  if (sortCancelBtn) sortCancelBtn.textContent = tr("cancel");
+  if (sortStartBtn) sortStartBtn.textContent = tr("start");
+  if (sortCloseBtn) sortCloseBtn.textContent = tr("close");
+  if (sortDeleteSelectedBtn) sortDeleteSelectedBtn.textContent = tr("deleteSelectedCopies");
+  if (sortDeleteAllBtn) sortDeleteAllBtn.textContent = tr("deleteAllCopies");
+  renderMode();
+  renderAppUpdateButton();
+}
+
+function renderAppUpdateButton() {
+  if (!btnAppUpdate) return;
+  const st = appUpdateStatus || {};
+  const show = !!st.available || st.state === "downloading";
+  btnAppUpdate.classList.toggle("hidden", !show);
+  if (!show) return;
+  if (st.state === "downloading") {
+    btnAppUpdate.textContent = tr("updateDownloading");
+    btnAppUpdate.disabled = true;
+    return;
+  }
+  const ver = st.version ? ` ${st.version}` : "";
+  btnAppUpdate.textContent = `${tr("updateApp")}${ver}`;
+  btnAppUpdate.disabled = false;
+}
 
 function setHidden(el, hidden) {
   if (!el) return;
@@ -88,17 +300,31 @@ function parseProgressMeta(progressText) {
 function updateWindowHeight() {
   if (mode === "search") {
     if (!currentQuery) {
-      window.assistantApi.setWindowHeight(200);
+      window.assistantApi.setWindowHeight(220);
       return;
     }
     const hasRows = visibleResults.length > 0;
-    window.assistantApi.setWindowHeight(hasRows ? 420 : 230);
+    window.assistantApi.setWindowHeight(hasRows ? 430 : 250);
     return;
   }
 
-  const baseHeight = aiStatus.installed ? 290 : 220;
-  const withAnswerHeight = aiStatus.installed ? 400 : 320;
+  const baseHeight = aiStatus.installed ? 250 : 220;
+  const withAnswerHeight = aiStatus.installed ? 420 : 350;
+  const withCreatedFileHeight = aiStatus.installed ? 560 : 500;
+  if (aiCreatedFile) {
+    window.assistantApi.setWindowHeight(withCreatedFileHeight);
+    return;
+  }
   window.assistantApi.setWindowHeight(aiHasAnswer ? withAnswerHeight : baseHeight);
+}
+
+function scheduleAiStatusErrorClear() {
+  if (aiStatusErrorTimer) clearTimeout(aiStatusErrorTimer);
+  if (!aiStatus.error) return;
+  aiStatusErrorTimer = setTimeout(() => {
+    aiStatus = { ...aiStatus, error: "" };
+    renderAiRow();
+  }, 10000);
 }
 
 function renderNoResults() {
@@ -118,11 +344,11 @@ function renderCreatedFile() {
   }
 
   aiCreatedEl.innerHTML = `
-    <div class="created-title">Создан файл: ${escapeHtml(aiCreatedFile.name || "result")}</div>
+    <div class="created-title">${tr("createdFile")} ${escapeHtml(aiCreatedFile.name || "result")}</div>
     <div class="created-path">${escapeHtml(aiCreatedFile.path || "")}</div>
     <div class="created-actions">
-      <button class="result-action" data-open-file>Открыть</button>
-      <button class="result-action" data-open-folder>📁 Папка</button>
+      <button class="result-action" data-open-file>${tr("open")}</button>
+      <button class="result-action" data-open-folder>📁 ${tr("folder")}</button>
     </div>
   `;
   setHidden(aiCreatedEl, false);
@@ -147,7 +373,7 @@ function renderResults() {
     row.innerHTML = `
       <div class="result-head">
         <div class="result-title">${highlight(item.title || "", currentQuery)}</div>
-        <button class="result-action" title="Показать в папке" data-folder>📁</button>
+        <button class="result-action" title="${tr("showInFolder")}" data-folder>📁</button>
       </div>
       <div class="result-path">${highlight(item.path || "", currentQuery)}</div>
       <div class="result-snippet">${highlight(item.snippet || "", currentQuery)}</div>
@@ -167,17 +393,17 @@ function renderResults() {
 function renderMode() {
   const aiMode = mode === "ai";
   btnAiMode.classList.toggle("active", aiMode);
-  btnAiMode.textContent = "ИИ";
+  btnAiMode.textContent = tr("aiMode");
 
   if (aiMode) {
-    input.placeholder = "Напиши задачу по файлам...";
+    input.placeholder = tr("aiPlaceholder");
     setHidden(btnSend, false);
     setHidden(aiFilesEl, !aiStatus.installed);
     setHidden(aiResponseEl, !aiHasAnswer);
     setResultsVisibility(false);
     setHidden(noResultsEl, true);
   } else {
-    input.placeholder = "Искать файлы, заметки, проекты...";
+    input.placeholder = tr("searchPlaceholder");
     setHidden(btnSend, true);
     setHidden(aiResponseEl, true);
     setHidden(aiFilesEl, true);
@@ -191,11 +417,11 @@ function renderMode() {
 function renderAiFiles() {
   if (!aiFilesEl) return;
   if (!aiFiles.length) {
-    aiFilesEl.textContent = "Перетащи сюда файлы для ИИ";
+    aiFilesEl.textContent = tr("dragFiles");
     return;
   }
   aiFilesEl.innerHTML = aiFiles
-    .map((filePath, idx) => `<span class="ai-file-pill">${escapeHtml(filePath.split(/[\\/]/).pop())}<button class="ai-file-remove" data-remove="${idx}" title="Удалить">×</button></span>`)
+    .map((filePath, idx) => `<span class="ai-file-pill">${escapeHtml(filePath.split(/[\\/]/).pop())}<button class="ai-file-remove" data-remove="${idx}" title="${tr("aiRemove")}">×</button></span>`)
     .join("");
 
   aiFilesEl.querySelectorAll(".ai-file-remove").forEach((btn) => {
@@ -233,14 +459,14 @@ function renderStatus() {
 
   let textLine = "";
   if (status.state === "indexing") {
-    const limitLabel = settings.unlimitedIndexing ? "без лимита" : "лимит 400 / 1.5 мин";
-    textLine = `Индексация... ${status.scanned}/${status.total || "?"} (${limitLabel})`;
+    const limitLabel = settings.unlimitedIndexing ? tr("unlimited") : tr("limit");
+    textLine = `${tr("indexing")} ${status.scanned}/${status.total || "?"} (${limitLabel})`;
   } else if (status.state === "ready") {
-    textLine = `Индекс готов. Файлов: ${status.fileCount || 0}`;
+    textLine = `${tr("ready")} ${status.fileCount || 0}`;
   } else if (status.state === "paused") {
-    textLine = "Индексация на паузе";
+    textLine = tr("paused");
   } else if (status.state === "error") {
-    textLine = status.lastError ? `Ошибка индексации: ${status.lastError}` : "Ошибка индексации. Проверь логи.";
+    textLine = status.lastError ? `${tr("indexError")}: ${status.lastError}` : `${tr("indexError")}.`;
   }
 
   if (textLine) {
@@ -254,7 +480,7 @@ function renderStatus() {
     const secs = Math.max(0, Math.ceil((throttleUntil - Date.now()) / 1000));
     const pause = document.createElement("span");
     pause.className = "status-text";
-    pause.textContent = `Пауза: ${secs} сек`;
+    pause.textContent = `${tr("pause")}: ${secs}s`;
     statusEl.appendChild(pause);
   }
 
@@ -284,7 +510,7 @@ function renderStatus() {
     const sortBtn = document.createElement("button");
     sortBtn.type = "button";
     sortBtn.className = "status-filter status-sort-btn";
-    sortBtn.textContent = "Сортировка";
+    sortBtn.textContent = tr("fileOps");
     sortBtn.addEventListener("click", () => {
       window.assistantApi.openSortWindow();
     });
@@ -347,18 +573,18 @@ function renderDuplicateGroups() {
 
   const groupsToShow = filteredDuplicateGroups();
   if (!groupsToShow.length) {
-    sortListEl.innerHTML = '<div class="sort-empty">Похожие файлы не найдены по текущему фильтру.</div>';
+    sortListEl.innerHTML = `<div class="sort-empty">${tr("duplicateFiles")} — ${tr("noResults").toLowerCase()}.</div>`;
     return;
   }
 
   const head = document.createElement("div");
   head.className = "sort-table-head";
   head.innerHTML = `
-    <div class="sort-check-all-wrap"><input id="sort-select-all" type="checkbox" checked /><span>Выбрать</span></div>
-    <div>Файл</div>
-    <div>Путь</div>
-    <div>Совпадает по</div>
-    <div>Папка</div>
+    <div class="sort-check-all-wrap"><input id="sort-select-all" type="checkbox" checked /><span>${tr("select")}</span></div>
+    <div>${tr("file")}</div>
+    <div>${tr("path")}</div>
+    <div>${tr("matchBy")}</div>
+    <div>${tr("folder")}</div>
   `;
   sortListEl.appendChild(head);
 
@@ -368,7 +594,7 @@ function renderDuplicateGroups() {
 
     const groupLabel = document.createElement("div");
     groupLabel.className = "sort-group-label";
-    groupLabel.textContent = `Группа ${groupIndex + 1}: ${group.reason || "Похожие файлы"}`;
+    groupLabel.textContent = `${tr("group")} ${groupIndex + 1}: ${group.reason || tr("duplicateFiles")}`;
     container.appendChild(groupLabel);
 
     const originalRow = document.createElement("div");
@@ -377,8 +603,8 @@ function renderDuplicateGroups() {
       <div>—</div>
       <div class="sort-file-cell">${escapeHtml(group.original?.name || group.original?.path || "")} <span class="sort-size">(${formatBytes(group.original?.size || 0)})</span></div>
       <div class="sort-path-cell">${escapeHtml(group.original?.path || "")}</div>
-      <div>Оригинал</div>
-      <div><button class="result-action" data-folder="${escapeHtml(group.original?.path || "")}" title="Открыть папку">📁</button></div>
+      <div>${tr("original")}</div>
+      <div><button class="result-action" data-folder="${escapeHtml(group.original?.path || "")}" title="${tr("folder")}">📁</button></div>
     `;
     container.appendChild(originalRow);
 
@@ -390,8 +616,8 @@ function renderDuplicateGroups() {
         <div><input id="${checkboxId}" type="checkbox" class="dup-checkbox" data-path="${escapeHtml(copy.path || "")}" checked /></div>
         <div class="sort-file-cell"><label for="${checkboxId}">${escapeHtml(copy.name || copy.path || "")}</label> <span class="sort-size">(${formatBytes(copy.size || 0)})</span></div>
         <div class="sort-path-cell">${escapeHtml(copy.path || "")}</div>
-        <div>${escapeHtml(group.reason || "Похожие")}</div>
-        <div><button class="result-action" data-folder="${escapeHtml(copy.path || "")}" title="Открыть папку">📁</button></div>
+        <div>${escapeHtml(group.reason || tr("similar"))}</div>
+        <div><button class="result-action" data-folder="${escapeHtml(copy.path || "")}" title="${tr("folder")}">📁</button></div>
       `;
       container.appendChild(row);
     });
@@ -424,11 +650,13 @@ function updateSortSummary() {
   }, 0);
 
   sortSummaryEl.textContent = groups
-    ? `Найдено групп: ${groups}. Копий для удаления: ${copies}.`
-    : "Похожие файлы не найдены.";
+    ? (currentLanguage === "en"
+      ? `Groups found: ${groups}. Copies to delete: ${copies}.`
+      : `Найдено групп: ${groups}. Копий для удаления: ${copies}.`)
+    : (currentLanguage === "en" ? "No similar files found." : "Похожие файлы не найдены.");
 
   if (sortSpaceInfoEl) {
-    sortSpaceInfoEl.textContent = `Общий размер копий: ${formatBytes(totalBytes)}`;
+    sortSpaceInfoEl.textContent = `${tr("copySizeTotal")} ${formatBytes(totalBytes)}`;
   }
 }
 
@@ -444,7 +672,7 @@ async function startDuplicateSort() {
   sortRunning = true;
   setHidden(sortModalEl, false);
   showSortSection("progress");
-  setSortProgress(0, 1, "Анализ файлов...");
+  setSortProgress(0, 1, tr("analyzingFiles"));
 
   const response = await window.assistantApi.startDuplicateSort();
   sortRunning = false;
@@ -453,7 +681,7 @@ async function startDuplicateSort() {
     showSortSection("results");
     duplicateGroups = [];
     updateSortSummary();
-    sortSummaryEl.textContent = `Ошибка сортировки: ${response?.error || "Неизвестная ошибка"}`;
+    sortSummaryEl.textContent = `${tr("sortError")}: ${response?.error || (currentLanguage === "en" ? "Unknown error" : "Неизвестная ошибка")}`;
     renderDuplicateGroups();
     return;
   }
@@ -476,7 +704,7 @@ async function removeDuplicatePaths(paths) {
   if (!paths.length) return;
   const response = await window.assistantApi.deleteDuplicateFiles(paths);
   if (!response?.ok) {
-    sortSummaryEl.textContent = `Ошибка удаления: ${response?.error || "Неизвестная ошибка"}`;
+    sortSummaryEl.textContent = `${tr("deleteError")}: ${response?.error || (currentLanguage === "en" ? "Unknown error" : "Неизвестная ошибка")}`;
     return;
   }
 
@@ -491,7 +719,7 @@ async function removeDuplicatePaths(paths) {
 
   const deletedCount = (response.deleted || []).length;
   const failedCount = (response.failed || []).length;
-  sortSummaryEl.textContent += ` Удалено: ${deletedCount}.` + (failedCount ? ` Ошибок: ${failedCount}.` : "");
+  sortSummaryEl.textContent += ` ${tr("deleted")}: ${deletedCount}.` + (failedCount ? ` ${tr("errors")}: ${failedCount}.` : "");
 }
 
 function initSortFloatingWindow() {
@@ -539,7 +767,7 @@ function renderAiRow() {
 
   if (aiStatus.installing) {
     const meta = parseProgressMeta(aiStatus.progress);
-    text.textContent = meta.text || "ИИ: установка...";
+    text.textContent = meta.text || `${tr("aiMode")}: ...`;
     left.appendChild(text);
 
     const progress = document.createElement("div");
@@ -550,10 +778,10 @@ function renderAiRow() {
     progress.appendChild(fill);
     left.appendChild(progress);
   } else if (aiStatus.installed) {
-    text.textContent = `ИИ установлен (${aiStatus.model || "model"})`;
+    text.textContent = `${tr("aiInstalled")} (${aiStatus.model || "model"})`;
     left.appendChild(text);
   } else {
-    text.textContent = "ИИ не установлен";
+    text.textContent = tr("aiNotInstalled");
     left.appendChild(text);
   }
 
@@ -573,13 +801,13 @@ function renderAiRow() {
   btn.className = "ai-btn";
 
   if (aiStatus.installed) {
-    btn.textContent = "Удалить";
+    btn.textContent = tr("aiRemove");
     btn.addEventListener("click", async () => {
       btn.disabled = true;
       await window.assistantApi.removeAi();
     });
   } else {
-    btn.textContent = "Установить ИИ";
+    btn.textContent = tr("aiInstall");
     btn.addEventListener("click", async () => {
       btn.disabled = true;
       await window.assistantApi.installAi();
@@ -592,34 +820,55 @@ function renderAiRow() {
 function applySettings(newSettings) {
   settings = newSettings || settings;
   document.body.dataset.theme = "dark";
-  document.documentElement.style.setProperty("--bg", `rgba(5, 5, 8, ${settings.opacity || 0.92})`);
-  document.documentElement.style.setProperty("--text", "#f2f2f4");
-  document.documentElement.style.setProperty("--muted", "#9aa2ad");
-  document.documentElement.style.setProperty("--panel", "rgba(12, 14, 20, 0.7)");
-  document.documentElement.style.setProperty("--border", "rgba(255, 255, 255, 0.08)");
+  document.documentElement.style.setProperty("--bg", `rgba(22, 25, 31, ${settings.opacity || 0.88})`);
+  document.documentElement.style.setProperty("--text", "#f4f6f8");
+  document.documentElement.style.setProperty("--muted", "#b6bec8");
+  document.documentElement.style.setProperty("--panel", "rgba(34, 38, 46, 0.72)");
+  document.documentElement.style.setProperty("--border", "rgba(255, 255, 255, 0.10)");
 }
 
 async function runAiQuery(query) {
+  if (aiResponseErrorTimer) {
+    clearTimeout(aiResponseErrorTimer);
+    aiResponseErrorTimer = null;
+  }
   aiHasAnswer = true;
   aiCreatedFile = null;
   renderCreatedFile();
   setHidden(aiResponseEl, false);
   updateWindowHeight();
-  aiResponseEl.innerHTML = "<div class=\"ai-answer pending\">Думаю...</div>";
+  aiResponseEl.innerHTML = `<div class=\"ai-answer pending\">${tr("aiThinking")}</div>`;
 
+  await new Promise((r) => setTimeout(r, 0));
   const resp = await window.assistantApi.askAi(query, aiFiles);
   if (!resp?.ok) {
-    aiResponseEl.innerHTML = `<div class=\"ai-answer error\">${escapeHtml(resp?.error || "Ошибка запроса")}</div>`;
+    aiResponseEl.innerHTML = `<div class=\"ai-answer error\">${escapeHtml(resp?.error || tr("aiQueryError"))}</div>`;
+    aiResponseErrorTimer = setTimeout(() => {
+      if (lastAiAnswerHtml) {
+        aiResponseEl.innerHTML = lastAiAnswerHtml;
+        return;
+      }
+      aiHasAnswer = false;
+      setHidden(aiResponseEl, true);
+      aiResponseEl.innerHTML = "";
+      updateWindowHeight();
+    }, 10000);
     return;
   }
 
   const answer = resp.answer || "";
-  aiResponseEl.innerHTML = `<div class=\"ai-answer\">${escapeHtml(answer).replace(/\n/g, "<br/>")}</div>`;
+  lastAiAnswerHtml = `<div class=\"ai-answer\">${escapeHtml(answer).replace(/\n/g, "<br/>")}</div>`;
+  aiResponseEl.innerHTML = lastAiAnswerHtml;
+  if (aiStatus.error) {
+    aiStatus = { ...aiStatus, error: "" };
+    renderAiRow();
+  }
 
   const created = await window.assistantApi.createFileFromAi({ query, answer });
   if (created?.ok && created.path) {
     aiCreatedFile = created;
     renderCreatedFile();
+    updateWindowHeight();
   }
 }
 
@@ -632,14 +881,7 @@ input.addEventListener("input", (event) => {
   }
 
   if (mode === "ai") {
-    if (!query) {
-      aiHasAnswer = false;
-      aiResponseEl.innerHTML = "";
-      aiCreatedFile = null;
-      renderCreatedFile();
-      setHidden(aiResponseEl, true);
-      updateWindowHeight();
-    }
+    // Keep previous answer visible until user sends a new query.
     return;
   }
 
@@ -728,14 +970,25 @@ window.addEventListener("DOMContentLoaded", () => {
   setResultsVisibility(false);
   renderAiFiles();
   renderCreatedFile();
+  renderStatus();
 
   window.assistantApi.getIndexStatus().then((data) => {
     status = data || status;
     renderStatus();
+  }).catch(() => {
+    renderStatus();
   });
 
   window.assistantApi.getSettings().then((data) => {
-    applySettings(data || settings);
+    const incoming = data || settings;
+    currentLanguage = incoming.language === "en" || incoming.language === "ru"
+      ? incoming.language
+      : detectDefaultLanguage();
+    if (!incoming.language) {
+      window.assistantApi.updateSettings({ language: currentLanguage }).catch(() => {});
+    }
+    applyLanguageUI();
+    applySettings(incoming);
     if (settings.rememberQuery) {
       const saved = localStorage.getItem("lastQuery");
       if (saved) {
@@ -743,25 +996,74 @@ window.addEventListener("DOMContentLoaded", () => {
         input.dispatchEvent(new Event("input"));
       }
     }
-  });
+
+    if (!settings.paused && window.assistantApi.startIndexing) {
+      const st = status?.state || "idle";
+      if (st === "idle" || st === "error") {
+        window.assistantApi.startIndexing().catch(() => {});
+      }
+    }
+  }).catch(() => {});
 
   if (window.assistantApi.getAiStatus) {
     window.assistantApi.getAiStatus().then((data) => {
       if (data && typeof data === "object") aiStatus = { ...aiStatus, ...data };
       renderAiRow();
+      scheduleAiStatusErrorClear();
     });
   }
 
+  if (window.assistantApi.getAppUpdateStatus) {
+    window.assistantApi.getAppUpdateStatus().then((st) => {
+      if (st && typeof st === "object") appUpdateStatus = { ...appUpdateStatus, ...st };
+      renderAppUpdateButton();
+      if (st?.state === "available") {
+        aiStatus = { ...aiStatus, error: `${tr("updateAvailable")}${st?.version ? ` ${st.version}` : ""}` };
+        renderAiRow();
+        scheduleAiStatusErrorClear();
+      }
+    }).catch(() => {});
+  }
+
   window.addEventListener("settings-updated", (event) => {
-    applySettings(event.detail || settings);
+    const next = event.detail || settings;
+    if (next.language === "en" || next.language === "ru") {
+      currentLanguage = next.language;
+      applyLanguageUI();
+    }
+    applySettings(next);
     renderStatus();
   });
 
   window.addEventListener("ai-status", (event) => {
     aiStatus = { ...aiStatus, ...(event.detail || {}) };
     renderAiRow();
+    scheduleAiStatusErrorClear();
     renderMode();
     renderAiFiles();
+  });
+
+  window.addEventListener("app-update-status", (event) => {
+    const st = event.detail || {};
+    appUpdateStatus = { ...appUpdateStatus, ...st };
+    renderAppUpdateButton();
+    if (st.state === "available") {
+      aiStatus = { ...aiStatus, error: `${tr("updateAvailable")}${st.version ? ` ${st.version}` : ""}` };
+      renderAiRow();
+      scheduleAiStatusErrorClear();
+    } else if (st.state === "downloading") {
+      aiStatus = { ...aiStatus, error: tr("updateDownloading") };
+      renderAiRow();
+      scheduleAiStatusErrorClear();
+    } else if (st.state === "installed") {
+      aiStatus = { ...aiStatus, error: tr("updateInstalled") };
+      renderAiRow();
+      scheduleAiStatusErrorClear();
+    } else if (st.state === "error" && st.error) {
+      aiStatus = { ...aiStatus, error: `${tr("updateCheckError")}: ${st.error}` };
+      renderAiRow();
+      scheduleAiStatusErrorClear();
+    }
   });
 
   window.addEventListener("ai-progress", (event) => {
@@ -773,10 +1075,10 @@ window.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("sort-progress", (event) => {
     const detail = event.detail || {};
     if (detail.type === "scan") {
-      setSortProgress(detail.processed || 0, detail.total || 1, "Анализ файлов...");
+      setSortProgress(detail.processed || 0, detail.total || 1, tr("analyzingFiles"));
     }
-    if (detail.type === "done") {
-      setSortProgress(detail.total || 1, detail.total || 1, "Завершено");
+  if (detail.type === "done") {
+      setSortProgress(detail.total || 1, detail.total || 1, tr("done"));
     }
   });
 
@@ -808,6 +1110,15 @@ window.addEventListener("DOMContentLoaded", () => {
   sortSearchEl?.addEventListener("input", (event) => {
     sortSearchQuery = String(event.target.value || "");
     renderDuplicateGroups();
+  });
+
+  toolbarEl?.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) return;
+    const t = event.target;
+    if (t && t.closest && t.closest("button, input, textarea, select, a")) return;
+    if (window.assistantApi.beginDrag) {
+      window.assistantApi.beginDrag().catch(() => {});
+    }
   });
 
   initSortFloatingWindow();
@@ -860,6 +1171,18 @@ btnAiMode.addEventListener("click", () => {
 
 btnClose.addEventListener("click", () => {
   window.assistantApi.hideWindow();
+});
+
+btnAppUpdate?.addEventListener("click", async () => {
+  if (btnAppUpdate.disabled) return;
+  btnAppUpdate.disabled = true;
+  try {
+    await window.assistantApi.installAppUpdate();
+  } catch {
+    // ignore
+  } finally {
+    btnAppUpdate.disabled = false;
+  }
 });
 
 btnSend.addEventListener("click", async () => {

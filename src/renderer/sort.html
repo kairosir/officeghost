@@ -10,7 +10,7 @@
     <div class="overlay">
       <div class="search-box">
         <div class="toolbar">
-          <div class="title">Сортировка файлов</div>
+          <div id="title-main" class="title">Сортировка файлов</div>
           <div class="actions">
             <button id="window-close" class="icon-btn text-btn" title="Закрыть (Esc)">×</button>
           </div>
@@ -18,42 +18,47 @@
 
         <div class="card-wrap">
           <div id="warning" class="card">
-            <h2>Сортировка файлов</h2>
-            <p>
-              Перед запуском закрой все документы и не открывай файлы до завершения сортировки.
-              Сортировка работает только с файлами Word (DOC/DOCX), Excel (XLS/XLSX), PDF.
-              На этапе анализа ассистент ничего не удаляет и не изменяет.
+            <h2 id="title-warning">Сортировка файлов</h2>
+            <p id="warning-text">
+              Перед запуском закрой все документы и не открывай файлы до завершения операции.
+              Сейчас анализируются только Word (DOC/DOCX), Excel (XLS/XLSX) и PDF.
             </p>
-            <div class="actions body-actions">
+            <label id="label-mode" class="settings-label" for="sort-mode">Режим</label>
+            <select id="sort-mode" class="settings-input">
+              <option id="mode-duplicates" value="duplicates">Сортировка файлов (поиск похожих по названию и содержимому)</option>
+              <option id="mode-organize" value="organize">Упорядочить файлы (разложить по папкам по названию)</option>
+            </select>
+            <div class="sort-warning-footer">
               <button id="start" class="btn primary">Начать</button>
             </div>
           </div>
 
           <div id="progress" class="card hidden">
-            <h2>Анализ файлов</h2>
+            <h2 id="title-progress">Анализ файлов</h2>
             <div id="progress-text">Подготовка...</div>
             <div class="bar"><div id="progress-fill" class="fill"></div></div>
           </div>
 
           <div id="results" class="card hidden">
             <div class="top-row">
-              <h2>Похожие файлы</h2>
+              <h2 id="title-results">Результаты сортировки</h2>
               <input id="search" type="text" placeholder="Поиск по найденным копиям..." />
             </div>
             <div id="summary" class="summary"></div>
             <div class="actions body-actions">
               <button id="delete-selected" class="btn">Удалить выбранные копии</button>
               <button id="delete-all" class="btn danger">Удалить все копии</button>
+              <button id="close" class="btn">Закрыть</button>
             </div>
 
             <div id="table" class="table" style="--c-check:120px; --c-file:260px; --c-path:1fr; --c-match:220px; --c-size:130px; --c-open:70px;">
               <div class="thead">
-                <div class="cell check-head"><input id="select-all" type="checkbox" checked /> <span>Выбрать</span></div>
-                <div class="cell head-resizable" data-col="file">Файл<div class="resizer"></div></div>
-                <div class="cell head-resizable" data-col="path">Путь<div class="resizer"></div></div>
-                <div class="cell head-resizable" data-col="match">Совпадает по<div class="resizer"></div></div>
-                <div class="cell head-resizable right" data-col="size">Размер<div class="resizer"></div></div>
-                <div class="cell center">Папка</div>
+                <div class="cell check-head"><input id="select-all" type="checkbox" checked /> <span id="head-select">Выбрать</span></div>
+                <div id="head-file" class="cell head-resizable" data-col="file">Файл<div class="resizer"></div></div>
+                <div id="head-path" class="cell head-resizable" data-col="path">Путь<div class="resizer"></div></div>
+                <div id="head-match" class="cell head-resizable" data-col="match">Совпадает по<div class="resizer"></div></div>
+                <div id="head-size" class="cell head-resizable right" data-col="size">Размер<div class="resizer"></div></div>
+                <div id="head-folder" class="cell center">Папка</div>
               </div>
               <div id="tbody" class="tbody"></div>
             </div>
@@ -62,6 +67,7 @@
       </div>
     </div>
 
+    <script src="./tauri-adapter.js"></script>
     <script src="./sort.js"></script>
   </body>
 </html>

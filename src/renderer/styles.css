@@ -1,10 +1,10 @@
 :root {
-  --bg: rgba(12, 13, 16, 0.92);
-  --text: #f2f2f4;
-  --muted: #9aa2ad;
+  --bg: rgba(22, 25, 31, 0.88);
+  --text: #f4f6f8;
+  --muted: #b6bec8;
   --accent: #5dd6a3;
   --border: rgba(255, 255, 255, 0.08);
-  --panel: rgba(18, 20, 26, 0.85);
+  --panel: rgba(34, 38, 46, 0.72);
 }
 
 body[data-theme="light"] {
@@ -287,6 +287,14 @@ body {
   color: var(--text);
 }
 
+.cloud-disabled {
+  opacity: 0.55;
+}
+
+.cloud-custom-only {
+  display: none;
+}
+
 .settings-hint {
   font-size: 12px;
   color: var(--muted);
@@ -392,6 +400,38 @@ body {
 }
 #report-path {
   font-size: 11px;
+}
+
+#contacts-row {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.contact-icon-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color .15s ease, transform .15s ease;
+}
+
+.contact-icon-btn:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.contact-icon {
+  font-size: 18px;
+  line-height: 1;
 }
 
 .ai-row {
@@ -1001,4 +1041,343 @@ body {
 .sort-table-head,
 .sort-table-row {
   grid-template-columns: 100px 260px 1fr 190px 80px;
+}
+
+/* Compact Spotlight Override */
+html, body {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
+
+.overlay {
+  width: 100%;
+  height: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.search-box {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toolbar {
+  min-height: 28px;
+}
+
+.title {
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.actions {
+  gap: 6px;
+}
+
+.build {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.icon-btn,
+.icon-btn.text-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.icon-btn img {
+  width: 15px;
+  height: 15px;
+}
+
+.search-input {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 10px;
+  min-height: 44px;
+}
+
+.search-icon {
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+#query {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 15px;
+  min-height: 42px;
+}
+
+.status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 40px;
+  font-size: 11px;
+}
+
+.status-text {
+  color: var(--muted);
+}
+
+.status-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.status-filter {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.status-filter.active {
+  border-color: var(--accent);
+  background: rgba(93, 214, 163, 0.16);
+}
+
+.results {
+  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.result {
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.result-title {
+  font-size: 12px;
+}
+
+.result-path,
+.result-snippet {
+  font-size: 11px;
+}
+
+.no-results {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 2px 4px;
+}
+
+.ai-row {
+  min-height: 28px;
+}
+
+.ai-response {
+  max-height: 160px;
+  overflow: auto;
+}
+
+/* Stability fixes: prevent horizontal growth */
+html, body {
+  max-width: 100%;
+}
+
+.overlay,
+.search-box,
+.status,
+.results,
+.result,
+.result-head,
+.result-title,
+.result-path,
+.result-snippet,
+.status-filters,
+.search-input {
+  max-width: 100%;
+}
+
+.status-filters {
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  padding-bottom: 2px;
+}
+
+.result-title,
+.result-path,
+.result-snippet {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.result-path,
+.result-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Drag behavior for frameless window */
+.toolbar[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+}
+
+.toolbar .actions,
+.toolbar .actions *,
+.search-input,
+.search-input *,
+.status,
+.status *,
+.results,
+.results * {
+  -webkit-app-region: no-drag;
+}
+
+/* Remove white corner artifacts in frameless mode */
+html, body {
+  background: rgba(16, 18, 23, 0.72) !important;
+  border-radius: 14px !important;
+  overflow: hidden;
+}
+
+.overlay {
+  border-radius: 14px !important;
+}
+
+
+.overlay {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+/* Settings: scroll for long indexing section */
+.settings-form {
+  min-height: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.settings-section.active {
+  min-height: 0;
+}
+
+/* Rounder spotlight shape + artifact cleanup */
+.overlay {
+  border-radius: 20px !important;
+  overflow: hidden;
+}
+
+html, body {
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+
+.search-box {
+  border-radius: 16px;
+}
+
+/* === Final window/layout overrides (keep at end) === */
+html,
+body {
+  background: transparent !important;
+  border-radius: 0 !important;
+  overflow: hidden;
+}
+
+body {
+  border: 0;
+}
+
+.overlay {
+  border-radius: 20px !important;
+  overflow: hidden !important;
+  background: rgba(24, 28, 34, 0.9) !important;
+}
+
+.search-box {
+  min-height: 0;
+}
+
+.settings-body {
+  min-height: 0;
+}
+
+.settings-form {
+  min-height: 0;
+  max-height: none !important;
+  overflow: hidden !important;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-section.active {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.settings-actions {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  justify-content: flex-end;
+}
+
+#settings-maxsize {
+  margin-bottom: 2px;
+}
+
+#settings-save {
+  min-width: 120px;
+}
+
+/* === macOS corner artifact hard-fix (final) === */
+html,
+body {
+  background: #1b2028 !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+}
+
+body {
+  margin: 0;
+}
+
+.overlay {
+  background: rgba(30, 35, 44, 0.94) !important;
+  border-radius: 22px !important;
+  overflow: hidden !important;
+}
+
+.search-box {
+  min-height: 0;
+  border-radius: 18px !important;
+  overflow: hidden;
 }

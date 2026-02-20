@@ -183,6 +183,7 @@ p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
   overflow: auto;
   min-height: 0;
   height: 100%;
+  max-height: 456px;
 }
 
 .group { border-bottom: 1px solid rgba(255,255,255,.08); }
@@ -194,7 +195,7 @@ p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
   font-size: 11px;
 }
 
-.row { border-bottom: 1px solid rgba(255,255,255,.05); font-size: 12px; }
+.row { border-bottom: 1px solid rgba(255,255,255,.05); font-size: 12px; min-height: 38px; }
 .row.original { background: rgba(255,255,255,.04); }
 .row:last-child { border-bottom: none; }
 
@@ -249,4 +250,126 @@ input,
 .check-head,
 .top-row {
   -webkit-app-region: no-drag;
+}
+
+#warning {
+  align-items: center;
+  text-align: center;
+}
+
+#warning h2 {
+  font-size: 16px;
+}
+
+#warning p {
+  font-size: 14px;
+  max-width: 92%;
+}
+
+#warning .body-actions {
+  justify-content: center;
+}
+
+/* Match main OfficeGhost theme */
+:root {
+  --bg: rgba(22, 25, 31, 0.88);
+  --panel: rgba(34, 38, 46, 0.72);
+  --text: #f4f6f8;
+  --muted: #b6bec8;
+  --accent: #5dd6a3;
+  --border: rgba(255, 255, 255, 0.10);
+}
+
+html, body {
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+
+.overlay {
+  background: var(--bg) !important;
+  border-radius: 20px !important;
+  overflow: hidden;
+}
+
+.card,
+.table {
+  border-radius: 14px !important;
+  background: var(--panel) !important;
+}
+
+.toolbar {
+  -webkit-app-region: drag;
+}
+
+.toolbar .actions,
+.toolbar .actions *,
+#search,
+.btn,
+.table,
+.tbody,
+.open-btn,
+input,
+button {
+  -webkit-app-region: no-drag;
+}
+
+/* === Final sort window overrides === */
+html,
+body {
+  background: transparent !important;
+  border-radius: 0 !important;
+  overflow: hidden;
+}
+
+.overlay {
+  border-radius: 20px !important;
+  overflow: hidden !important;
+  background: rgba(24, 28, 34, 0.9) !important;
+}
+
+.search-box,
+.card-wrap,
+.card {
+  min-height: 0;
+}
+
+.sort-warning-footer {
+  margin-top: 10px;
+  display: flex;
+  justify-content: center;
+}
+
+#sort-mode {
+  margin-top: 6px;
+}
+
+/* === macOS corner artifact hard-fix + fit layout === */
+html,
+body {
+  background: #1b2028 !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+}
+
+.overlay {
+  background: rgba(30, 35, 44, 0.94) !important;
+  border-radius: 22px !important;
+  overflow: hidden !important;
+}
+
+.card-wrap {
+  overflow: hidden;
+}
+
+.card {
+  overflow: hidden;
+}
+
+.table {
+  min-height: 380px;
+}
+
+.tbody {
+  max-height: none !important;
+  flex: 1 1 auto;
 }

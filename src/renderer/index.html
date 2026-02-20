@@ -9,16 +9,16 @@
   <body>
     <div class="overlay">
       <div class="search-box">
-        <div class="toolbar">
+        <div class="toolbar" data-tauri-drag-region>
           <div class="title">OfficeGhost</div>
           <div class="actions">
-            <div class="build">Build 0.8</div>
             <button id="btn-ai-mode" class="icon-btn text-btn" title="Режим ИИ" aria-label="Режим ИИ">ИИ</button>
+            <button id="btn-app-update" class="icon-btn text-btn hidden" title="Обновить приложение" aria-label="Обновить приложение">Обновить</button>
             <button id="btn-settings" class="icon-btn" title="Настройки" aria-label="Настройки">
-              <img src="./assets/settings.png" alt="Настройки" />
+              <img id="btn-settings-icon" src="./assets/settings.png" alt="Настройки" />
             </button>
             <button id="btn-toggle" class="icon-btn" title="Обновить" aria-label="Обновить">
-              <img src="./assets/reload.png" alt="Обновить" />
+              <img id="btn-toggle-icon" src="./assets/reload.png" alt="Обновить" />
             </button>
             <button id="btn-close" class="icon-btn text-btn" title="Закрыть" aria-label="Закрыть">×</button>
           </div>
@@ -42,13 +42,13 @@
         <div id="sort-modal" class="sort-modal hidden">
           <div id="sort-card" class="sort-card">
             <div id="sort-drag" class="sort-drag">
-              <div class="sort-drag-title">Сортировка файлов</div>
+              <div id="sort-drag-title" class="sort-drag-title">Сортировка файлов</div>
               
             </div>
 
             <div id="sort-warning" class="sort-section">
-              <div class="sort-title">Перед запуском</div>
-              <div class="sort-text">
+              <div id="sort-warning-title" class="sort-title">Перед запуском</div>
+              <div id="sort-warning-text" class="sort-text">
                 Перед запуском закрой все документы и не открывай файлы до завершения сортировки.<br/>
                 Сейчас сортировка работает только с файлами: Word (DOC/DOCX), Excel (XLS/XLSX), PDF.<br/>
                 На этапе анализа ассистент ничего не удаляет и не изменяет. После анализа ты сам выбираешь, какие копии удалить.
@@ -60,7 +60,7 @@
             </div>
 
             <div id="sort-progress" class="sort-section hidden">
-              <div class="sort-title">Сортировка выполняется</div>
+              <div id="sort-progress-title" class="sort-title">Сортировка выполняется</div>
               <div id="sort-progress-text" class="sort-text">Подготовка...</div>
               <div class="sort-progress">
                 <div id="sort-progress-fill" class="sort-progress-fill"></div>
@@ -69,7 +69,7 @@
 
             <div id="sort-results" class="sort-section hidden">
               <div class="sort-head">
-                <div class="sort-title">Похожие файлы</div>
+                <div id="sort-results-title" class="sort-title">Похожие файлы</div>
                 <input id="sort-search" class="settings-input sort-search" type="text" placeholder="Поиск по найденным копиям..." />
               </div>
               <div id="sort-summary" class="sort-text"></div>
@@ -86,6 +86,7 @@
       </div>
     </div>
 
+    <script src="./tauri-adapter.js"></script>
     <script src="./renderer.js"></script>
   </body>
 </html>

@@ -7,17 +7,21 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
-    "sync": "bash scripts/auto-commit.sh"
+    "sync": "bash scripts/auto-commit.sh",
+    "tauri:dev": "node scripts/tauri-runner.js dev",
+    "tauri:build": "node scripts/tauri-runner.js build"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.10.0",
     "electron": "^31.0.0",
     "electron-builder": "^26.7.0"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "electron-updater": "^6.3.9",
     "mammoth": "^1.7.0",
     "pdf-parse": "^1.1.1",
-    "xlsx": "^0.18.5",
-    "electron-updater": "^6.3.9"
+    "xlsx": "^0.18.5"
   },
   "build": {
     "appId": "com.officeghost.app",
@@ -29,6 +33,12 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
+      "multiLanguageInstaller": true,
+      "displayLanguageSelector": false,
+      "installerLanguages": [
+        "en_US",
+        "ru_RU"
+      ],
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "OfficeGhost",
@@ -48,7 +58,7 @@
     "publish": [
       {
         "provider": "generic",
-        "url": "https://updates.officeghost.app"
+        "url": "https://updates.officeghost.com"
       }
     ]
   }

@@ -13,14 +13,167 @@ const startBtn = document.getElementById("start");
 const deleteSelectedBtn = document.getElementById("delete-selected");
 const deleteAllBtn = document.getElementById("delete-all");
 const closeBtn = document.getElementById("close");
-const toolbarStartBtn = document.getElementById("toolbar-start");
 const windowCloseBtn = document.getElementById("window-close");
+const modeEl = document.getElementById("sort-mode");
+const sortToolbarEl = document.querySelector(".toolbar");
 
 let groups = [];
 let sortRunning = false;
 let searchQuery = "";
 let freedBytes = 0;
 let selectedPaths = new Set();
+let sortMode = "duplicates";
+let currentLanguage = "ru";
+
+const I18N = {
+  ru: {
+    titleMain: "Сортировка файлов",
+    titleWarning: "Сортировка файлов",
+    warningText: "Перед запуском закрой все документы и не открывай файлы до завершения операции. Сейчас анализируются только Word (DOC/DOCX), Excel (XLS/XLSX) и PDF.",
+    labelMode: "Режим",
+    modeDuplicates: "Сортировка файлов (поиск похожих по названию и содержимому)",
+    modeOrganize: "Упорядочить файлы (разложить по папкам по названию)",
+    start: "Начать",
+    titleProgress: "Анализ файлов",
+    preparing: "Подготовка...",
+    titleResults: "Результаты сортировки",
+    searchPlaceholder: "Поиск по найденным копиям...",
+    deleteSelected: "Удалить выбранные копии",
+    deleteAll: "Удалить все копии",
+    close: "Закрыть",
+    headSelect: "Выбрать",
+    headFile: "Файл",
+    headPath: "Путь",
+    headMatch: "Совпадает по",
+    headSize: "Размер",
+    headFolder: "Папка",
+    noRows: "Ничего не найдено по текущему фильтру.",
+    noFilesToSort: "Файлы для сортировки не найдены.",
+    noSimilar: "Похожие файлы не найдены.",
+    group: "Группа",
+    similar: "Похожие файлы",
+    original: "Оригинал",
+    movedFrom: "Перемещен из",
+    sortError: "Ошибка сортировки",
+    deleteError: "Ошибка удаления",
+    unknownError: "Неизвестная ошибка",
+    analyzing: "Анализ файлов...",
+    done: "Завершено",
+    folderFallback: "Папка",
+    folderPrefix: "Папка:",
+    foldersCreated: "Создано подпапок",
+    filesOrganized: "Разложено файлов",
+    totalSize: "Общий размер",
+    groups: "Групп",
+    copies: "Копий",
+    allFilesSize: "Общий размер всех файлов",
+    copiesSize: "Размер копий",
+    freed: "освобождено",
+    deleted: "Удалено",
+    errors: "Ошибок",
+    confirmDeleteAll: "Точно удалить все копии файлов? Будет удалено"
+  },
+  en: {
+    titleMain: "File sorting",
+    titleWarning: "File sorting",
+    warningText: "Before start, close all documents and do not open files until the operation finishes. Currently only Word (DOC/DOCX), Excel (XLS/XLSX) and PDF are analyzed.",
+    labelMode: "Mode",
+    modeDuplicates: "File sorting (find similar files by name and content)",
+    modeOrganize: "Organize files (place into folders by name)",
+    start: "Start",
+    titleProgress: "File analysis",
+    preparing: "Preparing...",
+    titleResults: "Sorting results",
+    searchPlaceholder: "Search in found duplicates...",
+    deleteSelected: "Delete selected copies",
+    deleteAll: "Delete all copies",
+    close: "Close",
+    headSelect: "Select",
+    headFile: "File",
+    headPath: "Path",
+    headMatch: "Match by",
+    headSize: "Size",
+    headFolder: "Folder",
+    noRows: "No matches for current filter.",
+    noFilesToSort: "No files found for sorting.",
+    noSimilar: "No similar files found.",
+    group: "Group",
+    similar: "Similar files",
+    original: "Original",
+    movedFrom: "Moved from",
+    sortError: "Sort error",
+    deleteError: "Delete error",
+    unknownError: "Unknown error",
+    analyzing: "Analyzing files...",
+    done: "Done",
+    folderFallback: "Folder",
+    folderPrefix: "Folder:",
+    foldersCreated: "Created subfolders",
+    filesOrganized: "Organized files",
+    totalSize: "Total size",
+    groups: "Groups",
+    copies: "Copies",
+    allFilesSize: "Total size of all files",
+    copiesSize: "Duplicate size",
+    freed: "freed",
+    deleted: "Deleted",
+    errors: "Errors",
+    confirmDeleteAll: "Delete all duplicate files? It will remove"
+  }
+};
+
+function t(key) {
+  return (I18N[currentLanguage] && I18N[currentLanguage][key]) || I18N.ru[key] || key;
+}
+
+function detectDefaultLanguage() {
+  const n = (navigator.language || "en").toLowerCase();
+  return n.startsWith("ru") ? "ru" : "en";
+}
+
+function applyI18n() {
+  const byId = {
+    "title-main": "titleMain",
+    "title-warning": "titleWarning",
+    "warning-text": "warningText",
+    "label-mode": "labelMode",
+    "mode-duplicates": "modeDuplicates",
+    "mode-organize": "modeOrganize",
+    "start": "start",
+    "title-progress": "titleProgress",
+    "title-results": "titleResults",
+    "delete-selected": "deleteSelected",
+    "delete-all": "deleteAll",
+    "close": "close",
+    "head-select": "headSelect",
+    "head-file": "headFile",
+    "head-path": "headPath",
+    "head-match": "headMatch",
+    "head-size": "headSize",
+    "head-folder": "headFolder"
+  };
+
+  Object.entries(byId).forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = t(key);
+  });
+
+  document.title = t("titleMain");
+  if (searchEl) searchEl.placeholder = t("searchPlaceholder");
+  if (progressTextEl && !progressTextEl.textContent.trim()) progressTextEl.textContent = t("preparing");
+  if (windowCloseBtn) windowCloseBtn.title = `${t("close")} (Esc)`;
+  document.documentElement.lang = currentLanguage;
+}
+
+async function resizeSortWindow(width, height) {
+  if (!window.assistantApi.resizeSortWindow) return;
+  try {
+    await window.assistantApi.resizeSortWindow(width, height);
+  } catch {
+    // ignore
+  }
+}
 
 function setSection(section) {
   warningEl.classList.toggle("hidden", section !== "warning");
@@ -93,6 +246,18 @@ function getStats() {
 }
 
 function updateDeleteButtonsState() {
+  if (sortMode === "organized") {
+    deleteAllBtn.disabled = true;
+    deleteSelectedBtn.disabled = true;
+    deleteAllBtn.classList.remove("active-danger");
+    deleteSelectedBtn.classList.remove("active-accent");
+    if (selectAllEl) {
+      selectAllEl.checked = false;
+      selectAllEl.indeterminate = false;
+    }
+    return;
+  }
+
   const total = getAllCopyPaths().length;
   const checked = selectedPaths.size;
 
@@ -118,11 +283,29 @@ function updateSummary() {
   const groupCount = groups.length;
   const copyCount = groups.reduce((acc, g) => acc + (g.copies || []).length, 0);
   const { allFilesBytes, copiesBytes } = getStats();
-  const freed = freedBytes > 0 ? ` (-${formatBytes(freedBytes)} освобождено)` : "";
+  const freed = freedBytes > 0 ? ` (-${formatBytes(freedBytes)} ${t("freed")})` : "";
 
-  summaryEl.textContent = groupCount
-    ? `Групп: ${groupCount}. Копий: ${copyCount}. Общий размер всех файлов: ${formatBytes(allFilesBytes)}. Размер копий: ${formatBytes(copiesBytes)}${freed}`
-    : "Похожие файлы не найдены.";
+  if (!groupCount) {
+    summaryEl.textContent = sortMode === "organized" ? t("noFilesToSort") : t("noSimilar");
+    return;
+  }
+
+  if (sortMode === "organized") {
+    const prefixRe = new RegExp(`^${t("folderPrefix").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i");
+    const preview = groups
+      .slice(0, 4)
+      .map((g) => {
+        const folder = (g.original?.name || g.reason || t("folderFallback")).replace(prefixRe, "");
+        const count = (g.copies || []).length;
+        return `${folder}: ${count}`;
+      })
+      .join(" | ");
+    const suffix = groups.length > 4 ? " | ..." : "";
+    summaryEl.textContent = `${t("foldersCreated")}: ${groupCount}. ${t("filesOrganized")}: ${copyCount}. ${t("totalSize")}: ${formatBytes(allFilesBytes)}.${freed} ${preview}${suffix}`;
+    return;
+  }
+
+  summaryEl.textContent = `${t("groups")}: ${groupCount}. ${t("copies")}: ${copyCount}. ${t("allFilesSize")}: ${formatBytes(allFilesBytes)}. ${t("copiesSize")}: ${formatBytes(copiesBytes)}${freed}`;
 }
 
 function rowHtml({ checkbox, name, path, match, size, folderPath, isOriginal = false, id = "", checked = false }) {
@@ -143,20 +326,25 @@ function renderRows() {
   tbodyEl.innerHTML = "";
 
   if (!list.length) {
-    tbodyEl.innerHTML = '<div class="empty">Ничего не найдено по текущему фильтру.</div>';
+    tbodyEl.innerHTML = `<div class="empty">${t("noRows")}</div>`;
     updateDeleteButtonsState();
     return;
   }
 
+  const selectAllWrap = document.querySelector(".check-head");
+  if (selectAllWrap) {
+    selectAllWrap.style.visibility = sortMode === "organized" ? "hidden" : "visible";
+  }
+
   let html = "";
   list.forEach((group, groupIdx) => {
-    html += `<div class="group"><div class="group-title">Группа ${groupIdx + 1}: ${escapeHtml(group.reason || "Похожие файлы")}</div>`;
+    html += `<div class="group"><div class="group-title">${t("group")} ${groupIdx + 1}: ${escapeHtml(group.reason || t("similar"))}</div>`;
 
     html += rowHtml({
       checkbox: false,
       name: group.original?.name || group.original?.path || "",
       path: group.original?.path || "",
-      match: "Оригинал",
+      match: t("original"),
       size: Number(group.original?.size || 0),
       folderPath: group.original?.path || "",
       isOriginal: true
@@ -164,15 +352,16 @@ function renderRows() {
 
     (group.copies || []).forEach((copy, idx) => {
       const copyPath = copy.path || "";
+      const checkboxEnabled = sortMode !== "organized";
       html += rowHtml({
-        checkbox: true,
+        checkbox: checkboxEnabled,
         id: `c-${groupIdx}-${idx}`,
         name: copy.name || copy.path || "",
         path: copyPath,
-        match: group.reason || "Похожие",
+        match: sortMode === "organized" ? `${t("movedFrom")}: ${copy.from || ""}` : (group.reason || t("similar")),
         size: Number(copy.size || 0),
         folderPath: copyPath,
-        checked: selectedPaths.has(copyPath)
+        checked: checkboxEnabled ? selectedPaths.has(copyPath) : false
       });
     });
 
@@ -231,7 +420,7 @@ async function removePaths(paths) {
   if (!paths.length) return;
   const resp = await window.assistantApi.deleteDuplicateFiles(paths);
   if (!resp?.ok) {
-    summaryEl.textContent = `Ошибка удаления: ${resp?.error || "Неизвестная ошибка"}`;
+    summaryEl.textContent = `${t("deleteError")}: ${resp?.error || t("unknownError")}`;
     return;
   }
 
@@ -242,15 +431,15 @@ async function removePaths(paths) {
 
   const failed = (resp.failed || []).length;
   if (failed) {
-    summaryEl.textContent += ` Ошибок: ${failed}.`;
+    summaryEl.textContent += ` ${t("errors")}: ${failed}.`;
   }
 }
 
 function setProgress(processed, total, label) {
-  const t = Math.max(1, Number(total || 0));
+  const tTotal = Math.max(1, Number(total || 0));
   const p = Math.max(0, Number(processed || 0));
-  const pct = Math.max(0, Math.min(100, Math.round((p / t) * 100)));
-  progressTextEl.textContent = `${label} ${p}/${t}`;
+  const pct = Math.max(0, Math.min(100, Math.round((p / tTotal) * 100)));
+  progressTextEl.textContent = `${label} ${p}/${tTotal}`;
   progressFillEl.style.width = `${pct}%`;
 }
 
@@ -289,10 +478,12 @@ function initColumnResize() {
 
 async function startSort() {
   sortRunning = true;
+  await resizeSortWindow(1080, 860);
   setSection("progress");
-  setProgress(0, 1, "Анализ файлов...");
+  setProgress(0, 1, t("analyzing"));
 
-  const resp = await window.assistantApi.startDuplicateSort();
+  const mode = modeEl ? modeEl.value : "duplicates";
+  const resp = await window.assistantApi.startDuplicateSort(mode);
   sortRunning = false;
 
   setSection("results");
@@ -300,27 +491,36 @@ async function startSort() {
     groups = [];
     selectedPaths = new Set();
     updateSummary();
-    summaryEl.textContent = `Ошибка сортировки: ${resp?.error || "Неизвестная ошибка"}`;
+    summaryEl.textContent = `${t("sortError")}: ${resp?.error || t("unknownError")}`;
     renderRows();
     return;
   }
 
+  sortMode = resp.mode === "organized" || (modeEl && modeEl.value === "organize") ? "organized" : "duplicates";
   groups = Array.isArray(resp.groups) ? resp.groups : [];
   searchQuery = "";
   searchEl.value = "";
   freedBytes = 0;
   initSelectionAll();
+
+  if (deleteSelectedBtn) deleteSelectedBtn.style.display = sortMode === "organized" ? "none" : "";
+  if (deleteAllBtn) deleteAllBtn.style.display = sortMode === "organized" ? "none" : "";
+
   updateSummary();
   renderRows();
 }
 
 window.addEventListener("sort-progress", (event) => {
   const detail = event.detail || {};
-  if (detail.type === "scan") setProgress(detail.processed || 0, detail.total || 1, "Анализ файлов...");
-  if (detail.type === "done") setProgress(detail.total || 1, detail.total || 1, "Завершено");
+  if (detail.type === "scan") setProgress(detail.processed || 0, detail.total || 1, t("analyzing"));
+  if (detail.type === "done") setProgress(detail.total || 1, detail.total || 1, t("done"));
 });
 
-window.addEventListener("sort-opened", () => {
+window.addEventListener("sort-opened", async () => {
+  sortMode = modeEl && modeEl.value === "organize" ? "organized" : "duplicates";
+  if (deleteSelectedBtn) deleteSelectedBtn.style.display = "";
+  if (deleteAllBtn) deleteAllBtn.style.display = "";
+  await resizeSortWindow(820, 380);
   setSection("warning");
 });
 
@@ -336,7 +536,7 @@ deleteSelectedBtn.addEventListener("click", async () => {
 deleteAllBtn.addEventListener("click", async () => {
   const all = getAllCopyPaths();
   if (!all.length) return;
-  const ok = window.confirm(`Точно удалить все копии файлов? Будет удалено: ${all.length} шт.`);
+  const ok = window.confirm(`${t("confirmDeleteAll")}: ${all.length}.`);
   if (!ok) return;
   await removePaths(all);
 });
@@ -357,12 +557,6 @@ windowCloseBtn?.addEventListener("click", () => {
   }
 });
 
-toolbarStartBtn?.addEventListener("click", async () => {
-  if (sortRunning) return;
-  await startSort();
-});
-
-
 selectAllEl.addEventListener("change", () => {
   const checked = !!selectAllEl.checked;
   const all = getAllCopyPaths();
@@ -376,8 +570,24 @@ searchEl.addEventListener("input", (event) => {
 });
 
 window.addEventListener("DOMContentLoaded", async () => {
+  try {
+    const st = await window.assistantApi.getSettings();
+    currentLanguage = st?.language === "ru" || st?.language === "en" ? st.language : detectDefaultLanguage();
+  } catch {
+    currentLanguage = detectDefaultLanguage();
+  }
+  applyI18n();
   initColumnResize();
   setSection("warning");
+
+  sortToolbarEl?.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) return;
+    const tNode = event.target;
+    if (tNode && tNode.closest && tNode.closest("button, input, textarea, select, a")) return;
+    if (window.assistantApi.beginDragSort) {
+      window.assistantApi.beginDragSort().catch(() => {});
+    }
+  });
 
   const data = await window.assistantApi.getDuplicateResult();
   if (data && Array.isArray(data.groups)) {

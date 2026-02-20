@@ -1059,7 +1059,7 @@ window.addEventListener("DOMContentLoaded", () => {
       aiStatus = { ...aiStatus, error: tr("updateInstalled") };
       renderAiRow();
       scheduleAiStatusErrorClear();
-    } else if (st.state === "error" && st.error) {
+    } else if (st.state === "error" && st.error && st.manual !== false) {
       aiStatus = { ...aiStatus, error: `${tr("updateCheckError")}: ${st.error}` };
       renderAiRow();
       scheduleAiStatusErrorClear();

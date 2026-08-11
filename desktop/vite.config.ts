@@ -7,6 +7,11 @@ const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Keep the desktop build independent from the website's PostCSS config.
+  // Tailwind is already handled by the dedicated Vite plugin above.
+  css: {
+    postcss: { plugins: [] },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src-ui"),

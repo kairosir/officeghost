@@ -9,7 +9,14 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://officeghost.com"),
   title: "OfficeGhost — ваши документы умеют отвечать",
   description: "Локальный AI-помощник для поиска, общения и работы с вашими документами.",
-  icons: { icon: "/favicon.png", shortcut: "/favicon.png" },
+  icons: {
+    icon: [
+      { url: "/brand/officeghost-mark-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/brand/officeghost-mark-64.png", sizes: "64x64", type: "image/png" },
+    ],
+    shortcut: "/brand/officeghost-mark-32.png",
+    apple: [{ url: "/brand/officeghost-mark-180.png", sizes: "180x180", type: "image/png" }],
+  },
   openGraph: {
     title: "OfficeGhost",
     description: "Ваши документы умеют отвечать.",

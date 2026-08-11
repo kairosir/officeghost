@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.DS_Store
+
+rust-indexer/target/
+src-tauri/target/
+
+# Legacy Electron client kept locally only as a migration reference.
+/src/
+/src-tauri-ui/
+/build/
+/.github/
+/scripts/auto-commit.sh
+/icon.original.png
+/icon.square.png

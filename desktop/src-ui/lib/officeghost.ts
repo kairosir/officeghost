@@ -3,8 +3,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type SearchResult = { title: string; path: string; snippet: string; score?: number };
 export type IndexStatus = { state: string; scanned: number; total: number; fileCount: number; current?: string; lastError?: string; roots?: string[] };
-export type AiStatus = { installed: boolean; installing: boolean; model: string; progress?: string; error?: string };
+export type AiStatus = { installed: boolean; installing: boolean; model: string; online?: boolean; provider?: string; progress?: string; error?: string };
 export type Settings = { roots?: string[]; paused?: boolean; hotkey?: string; scheduleEnabled?: boolean; scheduleMinutes?: number; aiModel?: string };
+export type HistoryMessage = { role: "user" | "assistant"; content: string };
 
 const demoFiles: SearchResult[] = [
   { title: "Стратегия продукта 2026.pdf", path: "/Documents/OfficeGhost/Стратегия продукта 2026.pdf", snippet: "Приоритеты продукта: приватная работа с документами, быстрый локальный поиск и понятные автоматизации.", score: 3 },
@@ -61,8 +62,8 @@ export async function searchDocuments(query: string): Promise<SearchResult[]> {
   return matched.length ? matched : demoFiles.slice(0, 2);
 }
 
-export async function askDocuments(query: string, filePaths: string[] = []) {
-  if (isTauri()) return call<{ ok: boolean; answer?: string; error?: string; provider?: string }>("ask_ai", { query, filePaths });
+export async function askDocuments(query: string, filePaths: string[] = [], history: HistoryMessage[] = [], useDocuments = true) {
+  if (isTauri()) return call<{ ok: boolean; answer?: string; error?: string; provider?: string }>("ask_ai", { query, filePaths, history, useDocuments });
   await new Promise((resolve) => window.setTimeout(resolve, 850));
   return { ok: true, answer: "По материалам из вашей библиотеки, главный приоритет — запустить закрытую бету после проверки индексации и сценариев создания документов. Команда также выделила приватную локальную обработку и быстрый поиск как ключевые преимущества продукта.", provider: "preview" };
 }

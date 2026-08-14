@@ -51,7 +51,7 @@ impl Default for Settings {
         Self {
             roots: vec![],
             paused: false,
-            hotkey: "CommandOrControl+1".to_string(),
+            hotkey: "".to_string(),
             theme: "dark".to_string(),
             remember_query: true,
             remember_pos: false,
@@ -63,10 +63,10 @@ impl Default for Settings {
             schedule_enabled: true,
             schedule_minutes: 30,
             ai_model: "qwen2.5:1.5b".to_string(),
-            ai_provider: "local".to_string(),
+            ai_provider: "auto".to_string(),
             language: "".to_string(),
-            cloud_vendor: "openai".to_string(),
-            cloud_api_url: "https://api.openai.com/v1/chat/completions".to_string(),
+            cloud_vendor: "officeghost".to_string(),
+            cloud_api_url: "https://www.officeghost.com/api/chat".to_string(),
             cloud_api_key: "".to_string(),
             cloud_model: "gpt-4o-mini".to_string(),
             license_email: "".to_string(),
@@ -228,10 +228,12 @@ fn load_settings_internal(app: &tauri::AppHandle) -> Settings {
     match fs::read_to_string(path) {
         Ok(raw) => {
             let mut st = serde_json::from_str::<Settings>(&raw).unwrap_or_default();
-            if st.hotkey.trim().is_empty() {
-                st.hotkey = "CommandOrControl+1".to_string();
+            if st.hotkey.eq_ignore_ascii_case("CommandOrControl+1") || st.hotkey.eq_ignore_ascii_case("CmdOrCtrl+1") {
+                st.hotkey.clear();
             }
-            st.ai_provider = "local".to_string();
+            st.ai_provider = "auto".to_string();
+            st.cloud_vendor = "officeghost".to_string();
+            st.cloud_api_url = "https://www.officeghost.com/api/chat".to_string();
             if st.language.trim().is_empty() {
                 st.language = detect_lang();
             }
@@ -755,6 +757,8 @@ fn load_ai_status_internal(app: &tauri::AppHandle, state: &AppState) {
       "installed": false,
       "installing": false,
       "model": model,
+      "online": true,
+      "provider": "officeghost-cloud",
       "progress": "",
       "error": ""
     });
@@ -1215,15 +1219,6 @@ fn is_model_available(model: &str) -> bool {
     code == 0
 }
 
-fn use_cloud_provider(mode: &str) -> bool {
-    let m = mode.trim().to_lowercase();
-    m == "cloud" || m == "auto"
-}
-
-fn cloud_only_provider(mode: &str) -> bool {
-    mode.trim().eq_ignore_ascii_case("cloud")
-}
-
 fn resolve_cloud_target(settings: &Settings) -> (String, String) {
     let vendor = settings.cloud_vendor.trim().to_lowercase();
     match vendor.as_str() {
@@ -1309,33 +1304,23 @@ fn extract_cloud_answer(parsed: &Value) -> Option<String> {
 }
 
 fn call_cloud_ai(settings: &Settings, prompt: &str) -> Result<String, String> {
-    let key = settings.cloud_api_key.trim();
-    if key.is_empty() {
-        return Err("Не указан API ключ облачного ИИ.".to_string());
-    }
+    let use_officeghost = settings.cloud_vendor.eq_ignore_ascii_case("officeghost")
+        || settings.cloud_api_key.trim().is_empty();
+    let (url, model) = if use_officeghost {
+        ("https://www.officeghost.com/api/chat".to_string(), "officeghost-cloud".to_string())
+    } else {
+        resolve_cloud_target(settings)
+    };
+    let payload = if use_officeghost {
+        json!({ "prompt": sanitize_process_input(prompt), "history": [] }).to_string()
+    } else {
+        json!({
+          "model": model,
+          "temperature": 0.15,
+          "messages": [{ "role": "user", "content": sanitize_process_input(prompt) }]
+        }).to_string()
+    };
 
-    let (url, model) = resolve_cloud_target(settings);
-    if url.trim().is_empty() || model.trim().is_empty() {
-        return Err("Для custom cloud нужно заполнить URL и модель.".to_string());
-    }
-
-    let payload = json!({
-    "model": model,
-    "temperature": 0.15,
-    "messages": [
-      {
-        "role": "system",
-        "content": "Ты AI-помощник OfficeGhost. Отвечай дружелюбно и коротко. Используй только предоставленный контекст и вложенные данные. Если данных мало, попроси уточнение."
-      },
-      {
-        "role": "user",
-        "content": sanitize_process_input(prompt)
-      }
-    ]
-  })
-  .to_string();
-
-    let auth = format!("Authorization: Bearer {}", key);
     let payload_clean = sanitize_process_input(&payload);
     let vendor = settings.cloud_vendor.trim().to_lowercase();
 
@@ -1348,9 +1333,15 @@ fn call_cloud_ai(settings: &Settings, prompt: &str) -> Result<String, String> {
         url.as_str(),
         "-H",
         "Content-Type: application/json",
-        "-H",
-        auth.as_str(),
     ];
+    let auth = format!("Authorization: Bearer {}", settings.cloud_api_key.trim());
+    if !use_officeghost {
+        args.push("-H");
+        args.push(auth.as_str());
+    } else {
+        args.push("-H");
+        args.push("X-OfficeGhost-Client: desktop");
+    }
     if vendor == "openrouter" {
         args.push("-H");
         args.push("HTTP-Referer: https://officeghost.com");
@@ -1380,7 +1371,11 @@ fn call_cloud_ai(settings: &Settings, prompt: &str) -> Result<String, String> {
         format!("Невалидный ответ облачного ИИ: {}", short)
     })?;
 
-    let answer = extract_cloud_answer(&parsed).unwrap_or_default();
+    let answer = if use_officeghost {
+        parsed.get("answer").and_then(|value| value.as_str()).unwrap_or("").trim().to_string()
+    } else {
+        extract_cloud_answer(&parsed).unwrap_or_default()
+    };
 
     if answer.is_empty() {
         return Err("Пустой ответ модели".to_string());
@@ -2106,6 +2101,9 @@ fn apply_hotkey(app: &tauri::AppHandle, hotkey: &str) -> Result<(), String> {
     manager
         .unregister_all()
         .map_err(|e| format!("unregister_all failed: {e}"))?;
+    if hk.trim().is_empty() {
+        return Ok(());
+    }
     manager
         .register(hk.as_str())
         .map_err(|e| format!("register hotkey failed: {e}"))?;
@@ -2412,11 +2410,9 @@ fn update_settings(app: tauri::AppHandle, partial: Value) -> Settings {
             "en".to_string()
         };
     }
-    current.ai_provider = "local".to_string();
-    current.cloud_vendor = "openai".to_string();
-    current.cloud_api_url = "https://api.openai.com/v1/chat/completions".to_string();
-    current.cloud_api_key = "".to_string();
-    current.cloud_model = "gpt-4o-mini".to_string();
+    current.ai_provider = "auto".to_string();
+    current.cloud_vendor = "officeghost".to_string();
+    current.cloud_api_url = "https://www.officeghost.com/api/chat".to_string();
     if let Some(v) = partial.get("licenseEmail").and_then(|v| v.as_str()) {
         current.license_email = v.to_string();
     }
@@ -2526,11 +2522,13 @@ fn search(app: tauri::AppHandle, state: State<'_, AppState>, query: String) -> V
             continue;
         }
 
+        let hit = tl.find(&q).or_else(|| tokens.iter().filter(|token| token.len() > 1).filter_map(|token| tl.find(token)).min());
         let snippet = if tl.is_empty() {
             "".to_string()
-        } else if let Some(i) = tl.find(&q) {
+        } else if let Some(i) = hit {
+            let hit_len = if tl.get(i..).map(|tail| tail.starts_with(&q)).unwrap_or(false) { q.len() } else { tokens.iter().find(|token| tl.get(i..).map(|tail| tail.starts_with(token.as_str())).unwrap_or(false)).map(|token| token.len()).unwrap_or(1) };
             let mut start = i.saturating_sub(80);
-            let mut end = (i + q.len() + 140).min(text.len());
+            let mut end = (i + hit_len + 140).min(text.len());
             while start > 0 && !text.is_char_boundary(start) {
                 start -= 1;
             }
@@ -3079,6 +3077,8 @@ fn ask_ai_blocking(
     state: AppState,
     query: String,
     file_paths: Vec<String>,
+    history: Vec<Value>,
+    use_documents: bool,
 ) -> Value {
     let ru = is_ru(&app);
     let q = sanitize_process_input(query.trim());
@@ -3086,15 +3086,17 @@ fn ask_ai_blocking(
         return json!({"ok": false, "error": if ru { "Пустой запрос" } else { "Empty query" }});
     }
 
-    let context_items = collect_context_from_index(&app, &state, &q, 14);
+    let context_items = if use_documents { collect_context_from_index(&app, &state, &q, 14) } else { vec![] };
     let attached: Vec<Value> = file_paths
         .iter()
         .take(8)
         .map(|p| read_user_file_context(&app, p))
         .collect();
 
-    if let Some(quick) = quick_chat_reply(&q) {
-        return json!({"ok": true, "answer": quick});
+    if history.is_empty() && !use_documents {
+        if let Some(quick) = quick_chat_reply(&q) {
+            return json!({"ok": true, "answer": quick, "provider": "built-in"});
+        }
     }
 
     let has_attached_context = attached.iter().any(|x| {
@@ -3105,11 +3107,8 @@ fn ask_ai_blocking(
     });
 
     let has_context = !context_items.is_empty() || has_attached_context;
-    if is_file_task_query(&q) && !has_context {
+    if use_documents && !has_context {
         return json!({"ok": true, "answer": if ru { "Пока не нашел релевантных данных в локальных файлах. Попробуй уточнить ФИО/ключевые слова или добавь нужный файл в диалог." } else { "I couldn't find relevant data in local files yet. Try clarifying names/keywords or attach the needed file to the chat." }});
-    }
-    if !has_context {
-        return json!({"ok": true, "answer": if ru { "В текущем индексе нет релевантных данных по этому запросу. Уточни формулировку или добавь файл в диалог." } else { "There is no relevant data for this request in the current index. Please refine the query or attach a file." }});
     }
 
     let context_block = context_items
@@ -3140,16 +3139,31 @@ fn ask_ai_blocking(
         .collect::<Vec<_>>()
         .join("\n\n");
 
+    let history_block = history
+        .iter()
+        .rev()
+        .take(24)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|item| {
+            let role = item.get("role").and_then(|value| value.as_str()).unwrap_or("user");
+            let content = item.get("content").and_then(|value| value.as_str()).unwrap_or("");
+            format!("{}: {}", role, sanitize_process_input(&content.chars().take(1800).collect::<String>()))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let lang = load_settings_internal(&app).language;
     let is_ru = lang.eq_ignore_ascii_case("ru");
 
-    let prompt = if is_ru {
+    let prompt = if is_ru && use_documents {
         format!(
-"Ты локальный AI-помощник OfficeGhost.
+"Ты AI-помощник OfficeGhost.
 
 Обязательные правила:
 1) Отвечай ТОЛЬКО на основе блоков 'Контекст из индекса' и 'Вложенные файлы'.
-2) Интернета у тебя нет. Ничего не выдумывай.
+2) Ничего не выдумывай и не добавляй сведения вне найденных фрагментов.
 3) Игнорируй регистр (строчные/заглавные) и мелкие орфографические отличия.
 4) Ищи смысл запроса, а не только точное совпадение слов.
 5) Собирай итог сразу из нескольких релевантных фрагментов, если они есть.
@@ -3157,6 +3171,9 @@ fn ask_ai_blocking(
 7) Пиши естественно, по-человечески, без бюрократических заголовков.
 8) По умолчанию 3-8 предложений; если пользователь просит подробно — отвечай подробнее.
 9) Если пользователь просит создать файл, сначала дай краткий ответ по сути запроса, без служебных пометок.
+
+История прошлых чатов:
+{}
 
 Запрос пользователя:
 {}
@@ -3167,17 +3184,18 @@ fn ask_ai_blocking(
 Вложенные файлы:
 {}
 ",
+    if history_block.is_empty() {"[нет]"} else {&history_block},
     q,
     if context_block.is_empty() {"[пусто]"} else {&context_block},
     if attached_block.is_empty() {"[нет]"} else {&attached_block}
     )
-    } else {
+    } else if !is_ru && use_documents {
         format!(
-            "You are OfficeGhost local AI assistant.
+            "You are OfficeGhost AI assistant.
 
 Mandatory rules:
 1) Use ONLY data from 'Indexed context' and 'Attached files'.
-2) No internet access. Do not invent facts.
+2) Do not invent facts or add information outside the retrieved fragments.
 3) Ignore case differences and minor spelling variations.
 4) Match by meaning, not only exact keywords.
 5) Merge relevant fragments into one coherent answer.
@@ -3185,6 +3203,9 @@ Mandatory rules:
 7) Write naturally, concise and friendly.
 8) Default length is 3-8 sentences; if user asks for detail, provide more.
 9) If user asks to create a file, still answer the request first in plain text.
+
+Previous chat history:
+{}
 
 User query:
 {}
@@ -3195,6 +3216,7 @@ Indexed context:
 Attached files:
 {}
 ",
+            if history_block.is_empty() { "[none]" } else { &history_block },
             q,
             if context_block.is_empty() {
                 "[empty]"
@@ -3207,13 +3229,25 @@ Attached files:
                 &attached_block
             }
         )
+    } else if is_ru {
+        format!("Ты OfficeGhost — дружелюбный AI-помощник. Продолжай разговор с учётом истории прошлых чатов. Не утверждай, что искал файлы: поиск сейчас не запрашивался.\n\nИстория:\n{}\n\nСообщение пользователя:\n{}", if history_block.is_empty() { "[нет]" } else { &history_block }, q)
+    } else {
+        format!("You are OfficeGhost, a friendly AI assistant. Continue the conversation using previous chat history. Do not claim to have searched files because document search was not requested.\n\nHistory:\n{}\n\nUser message:\n{}", if history_block.is_empty() { "[none]" } else { &history_block }, q)
     };
 
     let prompt_clean = sanitize_process_input(&prompt);
 
+    let settings = load_settings_internal(&app);
+    if let Ok(answer) = call_cloud_ai(&settings, &prompt_clean) {
+        return json!({"ok": true, "answer": answer, "provider": "officeghost-cloud"});
+    }
+
     let model = selected_model_from_settings(&app);
     let use_model = is_model_available(&model);
     if !use_model {
+        if !use_documents {
+            return json!({"ok": false, "error": if is_ru { "Нет подключения к облачному ИИ. Подключитесь к интернету или установите локальную модель." } else { "Cloud AI is unavailable. Connect to the internet or install a local model." }});
+        }
         let mut lines: Vec<String> = vec![if is_ru {
             "Локальная модель сейчас недоступна, но я нашел это в проиндексированных файлах:"
         } else {
@@ -3281,11 +3315,13 @@ async fn ask_ai(
     app: tauri::AppHandle,
     query: String,
     file_paths: Vec<String>,
+    history: Vec<Value>,
+    use_documents: bool,
 ) -> Result<Value, String> {
     let ru = is_ru(&app);
     let st = app.state::<AppState>().inner().clone();
     let out =
-        tauri::async_runtime::spawn_blocking(move || ask_ai_blocking(app, st, query, file_paths))
+        tauri::async_runtime::spawn_blocking(move || ask_ai_blocking(app, st, query, file_paths, history, use_documents))
             .await
             .map_err(|e| {
                 if ru {

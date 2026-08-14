@@ -119,6 +119,7 @@ impl Default for AppState {
               "version": "",
               "downloading": false,
               "installed": false,
+              "progress": 0,
               "error": ""
             }))),
             duplicate_result: Arc::new(Mutex::new(json!({
@@ -830,6 +831,28 @@ fn stem_token(token: &str) -> String {
     token.to_string()
 }
 
+fn normalize_search_query(raw: &str) -> String {
+    const COMMAND_WORDS: &[&str] = &[
+        "найди", "найдите", "найти", "поищи", "поищите", "ищи", "ищите", "ищу",
+        "поиск", "покажи", "покажите", "мне", "пожалуйста", "слово", "слова", "фразу",
+        "фраза", "в", "во", "на", "по", "из", "с", "со", "файл", "файлы", "файле",
+        "файлах", "документ", "документы", "документе", "документах", "find", "search",
+        "show", "please", "for", "in", "my", "file", "files", "document", "documents",
+    ];
+
+    let meaningful = raw
+        .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+        .map(normalize_token_piece)
+        .filter(|token| token.len() >= 2 && !COMMAND_WORDS.contains(&token.as_str()))
+        .collect::<Vec<_>>();
+
+    if meaningful.is_empty() {
+        raw.trim().to_lowercase()
+    } else {
+        meaningful.join(" ")
+    }
+}
+
 fn tokenize_query(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = vec![];
     let mut seen = std::collections::HashSet::new();
@@ -1027,7 +1050,7 @@ fn collect_context_from_index(
     query: &str,
     max_items: usize,
 ) -> Vec<Value> {
-    let q = query.trim().to_lowercase();
+    let q = normalize_search_query(query);
     if q.is_empty() {
         return vec![];
     }
@@ -1081,12 +1104,12 @@ fn collect_context_from_index(
                 lexical += 10;
             }
 
-            if t.len() >= 5 {
-                let pref = &t[..4];
-                if name.contains(pref) {
+            let pref = t.chars().take(4).collect::<String>();
+            if pref.chars().count() == 4 {
+                if name.contains(&pref) {
                     lexical += 3;
                 }
-                if text.contains(pref) {
+                if text.contains(&pref) {
                     lexical += 2;
                 }
             }
@@ -1694,6 +1717,7 @@ fn get_app_update_status(state: State<'_, AppState>) -> Value {
               "version": "",
               "downloading": false,
               "installed": false,
+              "progress": 0,
               "error": ""
             })
         })
@@ -1716,6 +1740,7 @@ async fn check_app_update_internal(
           "version": "",
           "downloading": false,
           "installed": false,
+          "progress": 0,
           "error": ""
         }),
     );
@@ -1771,6 +1796,7 @@ async fn check_app_update_internal(
                   "version": version,
                   "downloading": false,
                   "installed": false,
+                  "progress": 0,
                   "error": "",
                   "manual": manual
                 }),
@@ -1916,12 +1942,43 @@ async fn install_app_update(
           "version": version,
           "downloading": true,
           "installed": false,
+          "progress": 0,
           "error": ""
         }),
     );
 
+    let progress_app = app.clone();
+    let progress_state = app_state.clone();
+    let progress_version = version.clone();
+    let mut downloaded = 0u64;
+    let mut last_progress = 0u64;
     let out = update
-        .download_and_install(|_chunk_len, _content_len| {}, || {})
+        .download_and_install(
+            move |chunk_len, content_len| {
+                downloaded = downloaded.saturating_add(chunk_len as u64);
+                let progress = content_len
+                    .filter(|total| *total > 0)
+                    .map(|total| (downloaded.saturating_mul(100) / total).min(99))
+                    .unwrap_or(0);
+                if progress == 0 || progress >= last_progress.saturating_add(2) {
+                    last_progress = progress;
+                    let _ = set_and_emit_update_status(
+                        &progress_app,
+                        &progress_state,
+                        json!({
+                          "state": "downloading",
+                          "available": true,
+                          "version": progress_version,
+                          "downloading": true,
+                          "installed": false,
+                          "progress": progress,
+                          "error": ""
+                        }),
+                    );
+                }
+            },
+            || {},
+        )
         .await;
 
     match out {
@@ -1932,10 +1989,11 @@ async fn install_app_update(
                 json!({
                   "state": "installed",
                   "available": false,
-                  "version": "",
-                  "downloading": false,
-                  "installed": true,
-                  "error": ""
+                    "version": "",
+                    "downloading": false,
+                    "installed": true,
+                    "progress": 100,
+                    "error": ""
                 }),
             );
             app.restart()
@@ -2479,7 +2537,7 @@ fn get_index_status(state: State<'_, AppState>) -> Value {
 
 #[tauri::command]
 fn search(app: tauri::AppHandle, state: State<'_, AppState>, query: String) -> Vec<Value> {
-    let q = query.trim().to_lowercase();
+    let q = normalize_search_query(&query);
     let tokens = tokenize_query(&q);
 
     let index = load_index_for_queries(&app, state.inner());
@@ -3438,6 +3496,18 @@ mod document_tests {
             .expect("xml");
         assert!(sheet.contains("Маркетинг,125000"));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn removes_search_commands_from_document_query() {
+        assert_eq!(
+            normalize_search_query("Найди мне учеников в документах"),
+            "учеников"
+        );
+        assert_eq!(
+            normalize_search_query("Find students in my files"),
+            "students"
+        );
     }
 }
 

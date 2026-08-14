@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 export type SearchResult = { title: string; path: string; snippet: string; score?: number };
 export type IndexStatus = { state: string; scanned: number; total: number; fileCount: number; current?: string; lastError?: string; roots?: string[] };
 export type AiStatus = { installed: boolean; installing: boolean; model: string; online?: boolean; provider?: string; progress?: string; error?: string };
+export type UpdateStatus = { state: "idle" | "checking" | "available" | "downloading" | "installed" | "up-to-date" | "error"; available: boolean; version: string; downloading: boolean; installed: boolean; progress?: number; error?: string; manual?: boolean };
 export type Settings = { roots?: string[]; paused?: boolean; hotkey?: string; scheduleEnabled?: boolean; scheduleMinutes?: number; aiModel?: string };
 export type HistoryMessage = { role: "user" | "assistant"; content: string };
 
@@ -22,6 +23,18 @@ export async function getIndexStatus(): Promise<IndexStatus> {
 
 export async function getAiStatus(): Promise<AiStatus> {
   return isTauri() ? call("get_ai_status") : { installed: true, installing: false, model: "qwen2.5:3b" };
+}
+
+export async function getAppUpdateStatus(): Promise<UpdateStatus> {
+  return isTauri() ? call("get_app_update_status") : { state: "up-to-date", available: false, version: "", downloading: false, installed: false, progress: 100 };
+}
+
+export async function checkAppUpdate(): Promise<UpdateStatus> {
+  return isTauri() ? call("check_app_update", { manual: true }) : getAppUpdateStatus();
+}
+
+export async function installAppUpdate(): Promise<UpdateStatus> {
+  return isTauri() ? call("install_app_update") : getAppUpdateStatus();
 }
 
 export async function getSettings(): Promise<Settings> {
@@ -52,6 +65,11 @@ export async function subscribeIndexStatus(handler: (status: IndexStatus) => voi
 export async function subscribeAiStatus(handler: (status: AiStatus) => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<AiStatus>("ai-status", (event) => handler(event.payload));
+}
+
+export async function subscribeAppUpdateStatus(handler: (status: UpdateStatus) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<UpdateStatus>("app-update-status", (event) => handler(event.payload));
 }
 
 export async function searchDocuments(query: string): Promise<SearchResult[]> {

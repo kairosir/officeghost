@@ -4,9 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    tags: ["v*"]
     paths:
       - "desktop/**"
       - ".github/workflows/desktop-build.yml"
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -42,9 +46,29 @@ jobs:
           Copy-Item rust-indexer/target/release/rust-indexer.exe src-tauri/resources/rust-indexer.exe
 
       - name: Build application
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: npx tauri build --bundles nsis
 
+      - name: Publish signed Windows release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: desktop
+          tagName: v__VERSION__
+          releaseName: OfficeGhost v__VERSION__
+          releaseBody: Новая версия OfficeGhost. Установщики и автоматическое обновление находятся во вложениях.
+          releaseDraft: false
+          prerelease: false
+          generateReleaseNotes: true
+          updaterJsonPreferNsis: true
+          args: --bundles nsis
+
       - name: Upload installer
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
           name: officeghost-windows
@@ -88,9 +112,28 @@ jobs:
           chmod +x src-tauri/resources/rust-indexer
 
       - name: Build application
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: npx tauri build --target universal-apple-darwin --bundles dmg
 
+      - name: Publish signed macOS release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: desktop
+          tagName: v__VERSION__
+          releaseName: OfficeGhost v__VERSION__
+          releaseBody: Новая версия OfficeGhost. Установщики и автоматическое обновление находятся во вложениях.
+          releaseDraft: false
+          prerelease: false
+          generateReleaseNotes: true
+          args: --target universal-apple-darwin --bundles dmg
+
       - name: Upload installer
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
           name: officeghost-macos

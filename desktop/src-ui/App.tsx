@@ -1,11 +1,11 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { AlertCircle, ArrowUpRight, Check, ChevronDown, ChevronRight, CircleUserRound, Clock3, Copy, Database, File, FileArchive, FilePlus2, Files, FolderOpen, Library, MessageSquareText, Paperclip, PanelRightClose, Plus, RefreshCw, Search, Settings2, Sparkles, WandSparkles, X, Zap } from "lucide-react";
+import { AlertCircle, ArrowUpRight, Check, ChevronDown, ChevronRight, CircleUserRound, Clock3, Copy, Database, Download, File, FileArchive, FilePlus2, Files, FolderOpen, Library, MessageSquareText, Paperclip, PanelRightClose, Plus, RefreshCw, Search, Settings2, Sparkles, WandSparkles, X, Zap } from "lucide-react";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { PromptInput, PromptInputBody, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from "@/components/ai-elements/prompt-input";
 import { Source, Sources, SourcesContent, SourcesTrigger } from "@/components/ai-elements/sources";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { askDocuments, chooseChatFiles, chooseIndexFolder, createFileFromAnswer, getAiStatus, getIndexStatus, getSettings, openPath, refreshIndex, searchDocuments, subscribeAiStatus, subscribeIndexStatus, updateSettings, type AiStatus, type HistoryMessage, type IndexStatus, type SearchResult, type Settings } from "@/lib/officeghost";
+import { askDocuments, checkAppUpdate, chooseChatFiles, chooseIndexFolder, createFileFromAnswer, getAiStatus, getAppUpdateStatus, getIndexStatus, getSettings, installAppUpdate, openPath, refreshIndex, searchDocuments, subscribeAiStatus, subscribeAppUpdateStatus, subscribeIndexStatus, updateSettings, type AiStatus, type HistoryMessage, type IndexStatus, type SearchResult, type Settings, type UpdateStatus } from "@/lib/officeghost";
 
 type View = "chat" | "library" | "automations";
 type ChatMessage = { id: string; role: "user" | "assistant"; content: string; sources?: SearchResult[]; query?: string };
@@ -19,7 +19,7 @@ const createThread = (): ChatThread => ({ id: crypto.randomUUID(), title: "Но�
 function Brand() { return <div className="brand"><img src="/officeghost-mark.png" alt="" /><span>OfficeGhost</span></div>; }
 function StatusDot({ active = true }: { active?: boolean }) { return <span className={active ? "status-dot" : "status-dot status-dot--muted"} />; }
 
-function Sidebar({ view, documentCount, threads, activeThreadId, onView, onNewChat, onOpenChat }: { view: View; documentCount: number; threads: ChatThread[]; activeThreadId: string; onView: (view: View) => void; onNewChat: () => void; onOpenChat: (id: string) => void }) {
+function Sidebar({ view, documentCount, threads, activeThreadId, updateStatus, onView, onNewChat, onOpenChat, onCheckUpdate, onInstallUpdate }: { view: View; documentCount: number; threads: ChatThread[]; activeThreadId: string; updateStatus: UpdateStatus; onView: (view: View) => void; onNewChat: () => void; onOpenChat: (id: string) => void; onCheckUpdate: () => void; onInstallUpdate: () => void }) {
   const [chatsOpen, setChatsOpen] = useState(true);
   return <aside className="sidebar">
     <div className="sidebar-top" data-tauri-drag-region><Brand /><button className="icon-button" aria-label="Настроить папки" onClick={() => onView("library")}><Settings2 size={17} /></button></div>
@@ -32,7 +32,8 @@ function Sidebar({ view, documentCount, threads, activeThreadId, onView, onNewCh
     </nav>
     <div className="sidebar-spacer" />
     <div className="local-card"><div className="local-icon"><Database size={17} /></div><div><strong>Ваши файлы локальны</strong><span>По запросу передаётся только нужный контекст</span></div><Check size={15} className="local-check" /></div>
-    <button className="profile"><CircleUserRound size={22} /><span><strong>Личное пространство</strong><small>OfficeGhost 0.3</small></span><ChevronDown size={15} /></button>
+    <button className={`update-control update-control--${updateStatus.state}`} disabled={updateStatus.state === "checking" || updateStatus.downloading} onClick={updateStatus.available ? onInstallUpdate : onCheckUpdate} title={updateStatus.error || "Проверить наличие обновлений"}>{updateStatus.state === "checking" || updateStatus.downloading ? <RefreshCw className="spin" size={15} /> : updateStatus.available ? <Download size={15} /> : <RefreshCw size={15} />}<span><strong>{updateStatus.downloading ? `Загрузка ${updateStatus.progress || 0}%` : updateStatus.available ? `Обновить до ${updateStatus.version}` : updateStatus.state === "error" ? "Повторить проверку" : "Проверить обновления"}</strong><small>{updateStatus.state === "up-to-date" ? "Установлена последняя версия" : updateStatus.downloading ? "Не закрывайте OfficeGhost" : updateStatus.error || "Обновления устанавливаются безопасно"}</small></span></button>
+    <button className="profile"><CircleUserRound size={22} /><span><strong>Личное пространство</strong><small>OfficeGhost 0.3.1</small></span><ChevronDown size={15} /></button>
   </aside>;
 }
 
@@ -41,8 +42,10 @@ function DocumentIcon({ title }: { title: string }) {
   return <div className={`doc-icon doc-icon--${ext.toLowerCase()}`}><File size={18} /><span>{ext}</span></div>;
 }
 
+const SEARCH_COMMAND_WORDS = new Set(["найди", "найдите", "найти", "поищи", "поищите", "ищи", "ищите", "ищу", "поиск", "покажи", "покажите", "мне", "пожалуйста", "слово", "слова", "фразу", "фраза", "в", "во", "на", "по", "из", "с", "со", "файл", "файлы", "файле", "файлах", "документ", "документы", "документе", "документах", "find", "search", "show", "please", "for", "in", "my", "file", "files", "document", "documents"]);
+
 function queryTerms(query: string) {
-  return [...new Set((query.toLowerCase().match(/[\p{L}\p{N}_-]+/gu) || []).filter((term) => term.length > 1))].sort((a, b) => b.length - a.length);
+  return [...new Set((query.toLowerCase().match(/[\p{L}\p{N}_-]+/gu) || []).filter((term) => term.length > 1 && !SEARCH_COMMAND_WORDS.has(term)))].sort((a, b) => b.length - a.length);
 }
 
 function HighlightText({ text, query }: { text: string; query: string }) {
@@ -142,12 +145,13 @@ export default function App() {
   const [activeThreadId, setActiveThreadId] = useState(() => threads[0].id);
   const [indexStatus, setIndexStatus] = useState<IndexStatus>({ state: "idle", scanned: 0, total: 0, fileCount: 0 });
   const [aiStatus, setAiStatus] = useState<AiStatus>({ installed: false, installing: false, model: "cloud", online: true });
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle", available: false, version: "", downloading: false, installed: false });
   const [settings, setSettings] = useState<Settings>({ scheduleEnabled: true, scheduleMinutes: 30 });
   useEffect(() => { localStorage.setItem(CHAT_STORAGE, JSON.stringify(threads.slice(0, 50))); }, [threads]);
-  useEffect(() => { Promise.all([getIndexStatus(), getAiStatus(), getSettings()]).then(([index, ai, nextSettings]) => { setIndexStatus(index); setAiStatus(ai); setSettings(nextSettings); }); let stopIndex = () => {}; let stopAi = () => {}; subscribeIndexStatus(setIndexStatus).then((stop) => { stopIndex = stop; }); subscribeAiStatus(setAiStatus).then((stop) => { stopAi = stop; }); return () => { stopIndex(); stopAi(); }; }, []);
+  useEffect(() => { Promise.all([getIndexStatus(), getAiStatus(), getSettings(), getAppUpdateStatus()]).then(([index, ai, nextSettings, update]) => { setIndexStatus(index); setAiStatus(ai); setSettings(nextSettings); setUpdateStatus(update); }); let stopIndex = () => {}; let stopAi = () => {}; let stopUpdate = () => {}; subscribeIndexStatus(setIndexStatus).then((stop) => { stopIndex = stop; }); subscribeAiStatus(setAiStatus).then((stop) => { stopAi = stop; }); subscribeAppUpdateStatus(setUpdateStatus).then((stop) => { stopUpdate = stop; }); return () => { stopIndex(); stopAi(); stopUpdate(); }; }, []);
   const activeThread = threads.find((thread) => thread.id === activeThreadId) || threads[0];
   const updateThread = (next: ChatThread) => setThreads((current) => current.map((thread) => thread.id === next.id ? next : thread));
   const newChat = () => { const next = createThread(); setThreads((current) => [next, ...current]); setActiveThreadId(next.id); setView("chat"); };
   const content = useMemo(() => view === "library" ? <LibraryView indexStatus={indexStatus} settings={settings} onIndexStatus={setIndexStatus} onSettings={setSettings} /> : view === "automations" ? <AutomationsView settings={settings} onSettings={setSettings} /> : <ChatView thread={activeThread} threads={threads} indexStatus={indexStatus} aiStatus={aiStatus} onThreadChange={updateThread} onIndexStatus={setIndexStatus} />, [view, activeThread, threads, indexStatus, aiStatus, settings]);
-  return <TooltipProvider><div className="app-shell"><Sidebar view={view} documentCount={indexStatus.fileCount || 0} threads={threads} activeThreadId={activeThreadId} onView={setView} onNewChat={newChat} onOpenChat={(id) => { setActiveThreadId(id); setView("chat"); }} />{content}</div></TooltipProvider>;
+  return <TooltipProvider><div className="app-shell"><Sidebar view={view} documentCount={indexStatus.fileCount || 0} threads={threads} activeThreadId={activeThreadId} updateStatus={updateStatus} onView={setView} onNewChat={newChat} onOpenChat={(id) => { setActiveThreadId(id); setView("chat"); }} onCheckUpdate={() => { void checkAppUpdate().then(setUpdateStatus); }} onInstallUpdate={() => { void installAppUpdate().then(setUpdateStatus); }} />{content}</div></TooltipProvider>;
 }

@@ -29,6 +29,15 @@ const indexerArgs = [
   mode === 'build' ? '--release' : '--quiet'
 ].filter(Boolean);
 
+const stageIndexer = () => {
+  const extension = process.platform === 'win32' ? '.exe' : '';
+  const source = path.join('rust-indexer', 'target', mode === 'build' ? 'release' : 'debug', `rust-indexer${extension}`);
+  const resourceDir = path.join('src-tauri', 'resources');
+  const destination = path.join(resourceDir, `rust-indexer${extension}`);
+  require('fs').mkdirSync(resourceDir, { recursive: true });
+  require('fs').copyFileSync(source, destination);
+};
+
 const runTauri = () => {
   const child = spawn(tauriBin, args, { stdio: 'inherit', env, shell: process.platform === 'win32' });
   child.on('exit', (code) => process.exit(code ?? 1));
@@ -44,6 +53,7 @@ indexerBuild.on('exit', (code) => {
     console.error('Failed to build rust-indexer sidecar');
     process.exit(code ?? 1);
   }
+  stageIndexer();
   runTauri();
 });
 indexerBuild.on('error', (err) => {

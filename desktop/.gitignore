@@ -4,6 +4,8 @@ dist/
 
 rust-indexer/target/
 src-tauri/target/
+src-tauri/resources/rust-indexer
+src-tauri/resources/rust-indexer.exe
 
 # Legacy Electron client kept locally only as a migration reference.
 /src/

@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type SearchResult = { title: string; path: string; snippet: string; score?: number };
-export type IndexStatus = { state: string; scanned: number; total: number; fileCount: number; current?: string };
+export type IndexStatus = { state: string; scanned: number; total: number; fileCount: number; current?: string; lastError?: string; roots?: string[] };
 export type AiStatus = { installed: boolean; installing: boolean; model: string; progress?: string; error?: string };
-export type Settings = { paused?: boolean; hotkey?: string; scheduleEnabled?: boolean; scheduleMinutes?: number; aiModel?: string };
+export type Settings = { roots?: string[]; paused?: boolean; hotkey?: string; scheduleEnabled?: boolean; scheduleMinutes?: number; aiModel?: string };
 
 const demoFiles: SearchResult[] = [
   { title: "Стратегия продукта 2026.pdf", path: "/Documents/OfficeGhost/Стратегия продукта 2026.pdf", snippet: "Приоритеты продукта: приватная работа с документами, быстрый локальный поиск и понятные автоматизации.", score: 3 },
@@ -28,6 +29,28 @@ export async function getSettings(): Promise<Settings> {
 
 export async function updateSettings(partial: Settings): Promise<Settings> {
   return isTauri() ? call("update_settings", { partial }) : { ...(await getSettings()), ...partial };
+}
+
+export async function chooseIndexFolder(): Promise<Settings> {
+  return isTauri() ? call("choose_index_folder") : getSettings();
+}
+
+export async function chooseChatFiles(): Promise<string[]> {
+  return isTauri() ? call("choose_chat_files") : [];
+}
+
+export async function installAi(): Promise<AiStatus> {
+  return isTauri() ? call("install_ai") : getAiStatus();
+}
+
+export async function subscribeIndexStatus(handler: (status: IndexStatus) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<IndexStatus>("index-status", (event) => handler(event.payload));
+}
+
+export async function subscribeAiStatus(handler: (status: AiStatus) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<AiStatus>("ai-status", (event) => handler(event.payload));
 }
 
 export async function searchDocuments(query: string): Promise<SearchResult[]> {

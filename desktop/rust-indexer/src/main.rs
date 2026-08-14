@@ -2,27 +2,20 @@ use anyhow::{Context, Result};
 use calamine::{open_workbook_auto, DataType, Reader};
 use clap::{Parser, Subcommand};
 use pdf_extract::extract_text as extract_pdf_text;
-use quick_xml::Reader as XmlReader;
 use quick_xml::events::Event;
+use quick_xml::Reader as XmlReader;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH, Instant};
-use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
 const MAX_FILES: usize = usize::MAX;
 const MAX_FILE_SIZE_BYTES: u64 = 20 * 1024 * 1024;
-const MAX_TEXT_CHARS: usize = 20_000;
-const RATE_LIMIT_BATCH: usize = 400;
-const RATE_LIMIT_WINDOW_MS: u64 = 90_000;
-
-fn unlimited_indexing() -> bool {
-    std::env::var("INDEXER_UNLIMITED").ok().as_deref() == Some("1")
-}
+const MAX_TEXT_CHARS: usize = 200_000;
 
 fn max_file_size_bytes() -> u64 {
     std::env::var("INDEXER_MAX_FILE_SIZE_MB")
@@ -55,6 +48,10 @@ enum Commands {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
+    Extract {
+        #[arg(long)]
+        file: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -75,7 +72,20 @@ struct IndexData {
 }
 
 fn is_supported(ext: &str) -> bool {
-    matches!(ext, ".txt" | ".md" | ".pdf" | ".docx" | ".xlsx")
+    matches!(
+        ext,
+        ".txt"
+            | ".md"
+            | ".csv"
+            | ".json"
+            | ".html"
+            | ".htm"
+            | ".rtf"
+            | ".pdf"
+            | ".docx"
+            | ".xlsx"
+            | ".pptx"
+    )
 }
 
 fn should_ignore(name: &str) -> bool {
@@ -91,7 +101,6 @@ fn should_ignore(name: &str) -> bool {
             | "$RECYCLE.BIN"
     )
 }
-
 
 fn now_ts() -> String {
     let ms = SystemTime::now()
@@ -124,8 +133,6 @@ fn read_pdf(path: &Path) -> Result<String> {
     Ok(text.chars().take(MAX_TEXT_CHARS).collect())
 }
 
-
-
 fn read_docx(path: &Path) -> Result<String> {
     let file = fs::File::open(path)?;
     let mut archive = ZipArchive::new(file)?;
@@ -156,6 +163,46 @@ fn read_docx(path: &Path) -> Result<String> {
         }
     }
 
+    Ok(out.chars().take(MAX_TEXT_CHARS).collect())
+}
+
+fn read_pptx(path: &Path) -> Result<String> {
+    let file = fs::File::open(path)?;
+    let mut archive = ZipArchive::new(file)?;
+    let mut slide_names = (0..archive.len())
+        .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
+        .filter(|name| name.starts_with("ppt/slides/slide") && name.ends_with(".xml"))
+        .collect::<Vec<_>>();
+    slide_names.sort();
+    let mut out = String::new();
+    for name in slide_names {
+        let mut slide = archive.by_name(&name)?;
+        let mut xml = String::new();
+        slide.read_to_string(&mut xml)?;
+        let mut reader = XmlReader::from_str(&xml);
+        reader.trim_text(true);
+        let mut buf = Vec::new();
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Text(e)) => {
+                    if let Ok(text) = e.unescape() {
+                        out.push_str(&text);
+                        out.push(' ');
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(_) => break,
+                _ => {}
+            }
+            buf.clear();
+            if out.chars().count() >= MAX_TEXT_CHARS {
+                break;
+            }
+        }
+        if out.chars().count() >= MAX_TEXT_CHARS {
+            break;
+        }
+    }
     Ok(out.chars().take(MAX_TEXT_CHARS).collect())
 }
 
@@ -202,10 +249,11 @@ fn read_xlsx(path: &Path) -> Result<String> {
 
 fn extract_text(path: &Path, ext: &str) -> Result<String> {
     match ext {
-        ".txt" | ".md" => read_txt(path),
+        ".txt" | ".md" | ".csv" | ".json" | ".html" | ".htm" | ".rtf" => read_txt(path),
         ".pdf" => read_pdf(path),
         ".docx" => read_docx(path),
         ".xlsx" => read_xlsx(path),
+        ".pptx" => read_pptx(path),
         _ => Ok(String::new()),
     }
 }
@@ -214,7 +262,17 @@ fn walk_candidates(roots: &[String], max_size: u64) -> (Vec<PathBuf>, HashMap<St
     let mut files = Vec::new();
     let mut by_ext: HashMap<String, usize> = HashMap::new();
     for root in roots {
-        for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(root)
+            .into_iter()
+            .filter_entry(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .map(|name| !should_ignore(name))
+                    .unwrap_or(true)
+            })
+            .filter_map(|e| e.ok())
+        {
             let path = entry.path();
             if entry.file_type().is_dir() {
                 if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
@@ -269,7 +327,13 @@ fn save_index(index_path: &Path, index: &IndexData) -> Result<()> {
     Ok(())
 }
 
-fn write_report(index_path: &Path, scanned: usize, total: usize, by_ext: &HashMap<String, usize>, scanned_by_ext: &HashMap<String, usize>) {
+fn write_report(
+    index_path: &Path,
+    scanned: usize,
+    total: usize,
+    by_ext: &HashMap<String, usize>,
+    scanned_by_ext: &HashMap<String, usize>,
+) {
     let report = serde_json::json!({
         "updatedAt": now_ts(),
         "scanned": scanned,
@@ -278,21 +342,47 @@ fn write_report(index_path: &Path, scanned: usize, total: usize, by_ext: &HashMa
         "scannedByExt": scanned_by_ext
     });
     let report_path = index_path.with_file_name(
-        index_path.file_stem().unwrap_or_default().to_string_lossy().to_string() + "-report.json"
+        index_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+            + "-report.json",
     );
-    let _ = fs::write(report_path, serde_json::to_string_pretty(&report).unwrap_or_default());
+    let _ = fs::write(
+        report_path,
+        serde_json::to_string_pretty(&report).unwrap_or_default(),
+    );
 }
 
 fn run_index(index_path: &Path, roots: &[String]) -> Result<()> {
     let mut index = load_index(index_path);
     let max_size = max_file_size_bytes();
-    let (candidates, by_ext) = walk_candidates(roots, max_size);
+    let (mut candidates, mut by_ext) = walk_candidates(roots, max_size);
+    let report_file = index_path.with_file_name(
+        index_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+            + "-report.json",
+    );
+    candidates.retain(|path| path != index_path && path != &report_file);
+    by_ext.clear();
+    for path in &candidates {
+        let ext = format!(
+            ".{}",
+            path.extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_lowercase()
+        );
+        *by_ext.entry(ext).or_insert(0) += 1;
+    }
     let total = candidates.len().min(MAX_FILES);
     let mut seen = HashSet::new();
     let mut scanned = 0usize;
     let mut scanned_by_ext: HashMap<String, usize> = HashMap::new();
-    let mut batch_start = Instant::now();
-    let mut batch_count = 0usize;
     println!("{}", serde_json::json!({"type":"progress","scanned":0,"total":total,"byExt":by_ext,"scannedByExt":scanned_by_ext}).to_string());
 
     for path in candidates.into_iter().take(MAX_FILES) {
@@ -300,7 +390,10 @@ fn run_index(index_path: &Path, roots: &[String]) -> Result<()> {
         let mtime = mtime_ms(&path)?;
         let ext = format!(
             ".{}",
-            path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase()
+            path.extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_lowercase()
         );
         let ext_key = ext.clone();
         let key = path.to_string_lossy().to_string();
@@ -310,16 +403,6 @@ fn run_index(index_path: &Path, roots: &[String]) -> Result<()> {
             if existing.mtime_ms == mtime && existing.size == meta.len() {
                 scanned += 1;
                 *scanned_by_ext.entry(ext_key.clone()).or_insert(0) += 1;
-                batch_count += 1;
-                if batch_count >= RATE_LIMIT_BATCH {
-                    let elapsed = batch_start.elapsed().as_millis() as u64;
-                    if !unlimited_indexing() && elapsed < RATE_LIMIT_WINDOW_MS {
-                    let wait_ms = RATE_LIMIT_WINDOW_MS - elapsed;
-                    println!("{}", serde_json::json!({"type":"throttle","waitMs":wait_ms}).to_string());
-                    thread::sleep(std::time::Duration::from_millis(wait_ms));
-                }                    batch_start = Instant::now();
-                    batch_count = 0;
-                }
                 if scanned % 50 == 0 {
                     println!("{}", serde_json::json!({"type":"progress","scanned":scanned,"total":total,"byExt":by_ext,"scannedByExt":scanned_by_ext}).to_string());
                 }
@@ -330,7 +413,11 @@ fn run_index(index_path: &Path, roots: &[String]) -> Result<()> {
         let text = extract_text(&path, &ext).unwrap_or_default();
         let record = FileRecord {
             path: key.clone(),
-            name: path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string(),
+            name: path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string(),
             ext,
             size: meta.len(),
             mtime_ms: mtime,
@@ -340,16 +427,6 @@ fn run_index(index_path: &Path, roots: &[String]) -> Result<()> {
 
         scanned += 1;
         *scanned_by_ext.entry(ext_key.clone()).or_insert(0) += 1;
-        batch_count += 1;
-        if batch_count >= RATE_LIMIT_BATCH {
-            let elapsed = batch_start.elapsed().as_millis() as u64;
-            if !unlimited_indexing() && elapsed < RATE_LIMIT_WINDOW_MS {
-                    let wait_ms = RATE_LIMIT_WINDOW_MS - elapsed;
-                    println!("{}", serde_json::json!({"type":"throttle","waitMs":wait_ms}).to_string());
-                    thread::sleep(std::time::Duration::from_millis(wait_ms));
-                }            batch_start = Instant::now();
-            batch_count = 0;
-        }
         if scanned % 50 == 0 {
             println!("{}", serde_json::json!({"type":"progress","scanned":scanned,"total":total,"byExt":by_ext,"scannedByExt":scanned_by_ext}).to_string());
         }
@@ -361,7 +438,10 @@ fn run_index(index_path: &Path, roots: &[String]) -> Result<()> {
     save_index(index_path, &index)?;
     write_report(index_path, scanned, total, &by_ext, &scanned_by_ext);
     println!("{}", serde_json::json!({"type":"progress","scanned":scanned,"total":total,"byExt":by_ext,"scannedByExt":scanned_by_ext}).to_string());
-    println!("{}", serde_json::json!({"type":"status","state":"ready"}).to_string());
+    println!(
+        "{}",
+        serde_json::json!({"type":"status","state":"ready"}).to_string()
+    );
     Ok(())
 }
 
@@ -390,9 +470,15 @@ fn run_search(index_path: &Path, query: &str, limit: usize) -> Result<()> {
             } else {
                 let lower = item.text.to_lowercase();
                 if let Some(idx) = lower.find(&q) {
-                    let start = idx.saturating_sub(60);
-                    let end = (idx + q.len() + 80).min(item.text.len());
-                    item.text[start..end].replace("\n", " ")
+                    let mut start = idx.saturating_sub(60);
+                    let mut end = (idx + q.len() + 80).min(item.text.len());
+                    while start > 0 && !item.text.is_char_boundary(start) {
+                        start -= 1;
+                    }
+                    while end > start && !item.text.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    item.text.get(start..end).unwrap_or("").replace("\n", " ")
                 } else {
                     item.text.chars().take(160).collect()
                 }
@@ -410,6 +496,22 @@ fn run_search(index_path: &Path, query: &str, limit: usize) -> Result<()> {
     Ok(())
 }
 
+fn run_extract(file: &Path) -> Result<()> {
+    let ext = format!(
+        ".{}",
+        file.extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase()
+    );
+    if !is_supported(&ext) {
+        anyhow::bail!("unsupported file format: {}", ext);
+    }
+    let text = extract_text(file, &ext)?;
+    println!("{}", serde_json::json!({"path": file, "content": text}));
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -417,9 +519,16 @@ fn main() -> Result<()> {
             let index_path = PathBuf::from(index);
             run_index(&index_path, &root).context("index failed")?;
         }
-        Commands::Search { index, query, limit } => {
+        Commands::Search {
+            index,
+            query,
+            limit,
+        } => {
             let index_path = PathBuf::from(index);
             run_search(&index_path, &query, limit).context("search failed")?;
+        }
+        Commands::Extract { file } => {
+            run_extract(&PathBuf::from(file)).context("extract failed")?;
         }
     }
     Ok(())

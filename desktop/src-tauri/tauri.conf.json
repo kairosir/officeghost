@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "OfficeGhost",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.officeghost.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -44,7 +44,7 @@
     "active": true,
     "targets": "all",
     "resources": [
-      "../rust-indexer/target/release"
+      "resources/*"
     ],
     "windows": {
       "nsis": {

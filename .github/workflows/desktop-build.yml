@@ -2,6 +2,12 @@ name: Build desktop installers
 
 on:
   workflow_dispatch:
+    inputs:
+      repair_macos_release:
+        description: Rebuild and attach the macOS updater to the current version release
+        required: false
+        default: false
+        type: boolean
   push:
     branches: [main]
     tags: ["v*"]
@@ -14,6 +20,7 @@ permissions:
 
 jobs:
   build-windows:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.repair_macos_release }}
     runs-on: windows-latest
     defaults:
       run:
@@ -21,10 +28,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -83,10 +90,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -112,11 +119,11 @@ jobs:
           chmod +x src-tauri/resources/rust-indexer
 
       - name: Build application
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && !inputs.repair_macos_release }}
         run: npx tauri build --target universal-apple-darwin --bundles dmg
 
       - name: Publish signed macOS release
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') || inputs.repair_macos_release }}
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -130,10 +137,10 @@ jobs:
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
-          args: --target universal-apple-darwin --bundles dmg
+          args: --target universal-apple-darwin --bundles app,dmg
 
       - name: Upload installer
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && !inputs.repair_macos_release }}
         uses: actions/upload-artifact@v4
         with:
           name: officeghost-macos

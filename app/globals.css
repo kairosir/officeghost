@@ -155,13 +155,32 @@ button { font: inherit; }
 .auth-config-card h2 { margin: 12px 0 15px; font-size: 32px; letter-spacing: -.05em; }
 .auth-config-card > p:last-child { color: var(--muted); line-height: 1.6; margin: 0; font-size: 14px; }
 
+/* Desktop authentication handoff */
+.desktop-auth-page { min-height: 100svh; position: relative; overflow: hidden; display: grid; place-items: center; padding: 32px; background: #11120f; color: #f7f6ef; }
+.desktop-auth-glow { width: 520px; height: 520px; position: absolute; right: -130px; top: -190px; border: 1px solid rgba(200,255,61,.16); border-radius: 50%; box-shadow: 0 0 130px rgba(200,255,61,.08); }
+.desktop-auth-glow::before, .desktop-auth-glow::after { content: ""; position: absolute; inset: 90px; border: 1px solid rgba(200,255,61,.13); border-radius: inherit; }
+.desktop-auth-glow::after { inset: 180px; background: var(--lime); }
+.desktop-auth-card { width: min(100%, 480px); position: relative; z-index: 1; padding: 42px; border: 1px solid rgba(255,255,255,.1); border-radius: 14px; background: rgba(24,25,21,.96); box-shadow: 0 35px 100px rgba(0,0,0,.35); }
+.desktop-auth-card .brand { margin-bottom: 48px; }
+.desktop-auth-card .brand-word { color: #f7f6ef; }
+.desktop-auth-status { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 28px; border-radius: 13px; background: var(--lime); color: var(--ink); font-size: 21px; font-weight: 750; }
+.desktop-auth-card h1 { margin: 11px 0 13px; font-size: 42px; line-height: 1; letter-spacing: -.055em; }
+.desktop-auth-card > p:not(.section-kicker) { margin: 0; color: #999b92; font-size: 13px; line-height: 1.6; }
+.desktop-auth-user { display: flex; align-items: center; gap: 12px; margin: 27px 0 22px; padding: 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 10px; background: rgba(255,255,255,.035); }
+.desktop-auth-user img { width: 38px; height: 38px; border-radius: 50%; }
+.desktop-auth-user span { min-width: 0; display: grid; gap: 3px; }
+.desktop-auth-user strong, .desktop-auth-user small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.desktop-auth-user strong { font-size: 12px; }.desktop-auth-user small { color: #777970; font-size: 10px; }
+.desktop-auth-button { min-height: 47px; display: flex; align-items: center; justify-content: center; gap: 10px; border-radius: 9px; background: var(--lime); color: var(--ink); font-size: 12px; font-weight: 720; }
+.desktop-auth-button span { font-size: 16px; }.desktop-auth-hint { display: block; margin-top: 15px; color: #62645d; font-size: 9px; text-align: center; }
+
 /* Account */
 .account-shell { min-height: 100svh; display: grid; grid-template-columns: 260px minmax(0, 1fr); background: #eceae2; }
 .account-sidebar { min-height: 100svh; position: sticky; top: 0; align-self: start; padding: 30px 24px 25px; background: var(--ink); color: white; display: flex; flex-direction: column; }
 .account-sidebar .brand-mark { filter: brightness(0) invert(1); }
 .account-sidebar nav { display: grid; gap: 7px; margin-top: 58px; }
 .account-sidebar nav a { min-height: 46px; padding: 0 12px; display: flex; align-items: center; gap: 12px; border-radius: 6px; color: #b7b9b1; font-size: 12px; transition: color .2s, background .2s; }
-.account-sidebar nav a:first-child, .account-sidebar nav a:hover { background: #23251f; color: white; }
+.account-sidebar nav a:hover, .account-sidebar nav a.active { background: #23251f; color: white; }
 .account-sidebar nav a span { width: 20px; color: var(--lime); font-size: 16px; text-align: center; }
 .account-side-note { margin-top: auto; padding: 18px; border: 1px solid #32342e; border-radius: 8px; background: #1b1d18; }
 .account-side-note small { color: var(--lime); font: 8px var(--font-geist-mono); letter-spacing: .12em; }
@@ -191,6 +210,7 @@ button { font: inherit; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #e0ad35; box-shadow: 0 0 0 4px rgba(224,173,53,.13); }
 .status-dot.ok { background: #7bb62f; box-shadow: 0 0 0 4px rgba(123,182,47,.13); }
 .account-columns { display: grid; grid-template-columns: 1.35fr .85fr; gap: 18px; margin-top: 18px; }
+.account-columns--single { grid-template-columns: 1fr; }
 .account-panel { background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 30px; }
 .panel-heading { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
 .panel-heading h2 { margin: 8px 0 0; font-size: 23px; letter-spacing: -.045em; }

@@ -1,13 +1,13 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { AlertCircle, ArrowUpRight, Check, ChevronDown, ChevronRight, CircleUserRound, Clock3, Copy, Database, Download, File, FileArchive, FilePlus2, Files, FolderOpen, Library, MessageSquareText, Paperclip, PanelRightClose, Plus, RefreshCw, Search, Settings2, Sparkles, WandSparkles, X, Zap } from "lucide-react";
+import { AlertCircle, ArrowUpRight, Check, ChevronDown, ChevronRight, CircleUserRound, Clock3, Copy, Database, Download, ExternalLink, File, FileArchive, FilePlus2, Files, FolderOpen, Library, LogIn, LogOut, MessageSquareText, MonitorCheck, Paperclip, PanelRightClose, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, WandSparkles, X, Zap } from "lucide-react";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { PromptInput, PromptInputBody, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from "@/components/ai-elements/prompt-input";
 import { Source, Sources, SourcesContent, SourcesTrigger } from "@/components/ai-elements/sources";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { askDocuments, checkAppUpdate, chooseChatFiles, chooseIndexFolder, createFileFromAnswer, getAiStatus, getAppUpdateStatus, getIndexStatus, getSettings, installAppUpdate, openPath, refreshIndex, searchDocuments, subscribeAiStatus, subscribeAppUpdateStatus, subscribeIndexStatus, updateSettings, type AiStatus, type HistoryMessage, type IndexStatus, type SearchResult, type Settings, type UpdateStatus } from "@/lib/officeghost";
+import { askDocuments, beginDesktopAuth, checkAppUpdate, chooseChatFiles, chooseIndexFolder, createFileFromAnswer, getAiStatus, getAppUpdateStatus, getDesktopAuth, getIndexStatus, getSettings, installAppUpdate, openPath, refreshIndex, searchDocuments, signOutDesktop, subscribeAiStatus, subscribeAppUpdateStatus, subscribeDesktopAuth, subscribeIndexStatus, updateSettings, type AiStatus, type DesktopAuthStatus, type HistoryMessage, type IndexStatus, type SearchResult, type Settings, type UpdateStatus } from "@/lib/officeghost";
 
-type View = "chat" | "library" | "automations";
+type View = "chat" | "library" | "automations" | "account";
 type ChatMessage = { id: string; role: "user" | "assistant"; content: string; sources?: SearchResult[]; query?: string };
 type ChatThread = { id: string; title: string; createdAt: number; messages: ChatMessage[] };
 
@@ -19,7 +19,7 @@ const createThread = (): ChatThread => ({ id: crypto.randomUUID(), title: "Но�
 function Brand() { return <div className="brand"><img src="/officeghost-mark.png" alt="" /><span>OfficeGhost</span></div>; }
 function StatusDot({ active = true }: { active?: boolean }) { return <span className={active ? "status-dot" : "status-dot status-dot--muted"} />; }
 
-function Sidebar({ view, documentCount, threads, activeThreadId, updateStatus, onView, onNewChat, onOpenChat, onCheckUpdate, onInstallUpdate }: { view: View; documentCount: number; threads: ChatThread[]; activeThreadId: string; updateStatus: UpdateStatus; onView: (view: View) => void; onNewChat: () => void; onOpenChat: (id: string) => void; onCheckUpdate: () => void; onInstallUpdate: () => void }) {
+function Sidebar({ view, documentCount, threads, activeThreadId, updateStatus, authStatus, onView, onNewChat, onOpenChat, onCheckUpdate, onInstallUpdate }: { view: View; documentCount: number; threads: ChatThread[]; activeThreadId: string; updateStatus: UpdateStatus; authStatus: DesktopAuthStatus; onView: (view: View) => void; onNewChat: () => void; onOpenChat: (id: string) => void; onCheckUpdate: () => void; onInstallUpdate: () => void }) {
   const [chatsOpen, setChatsOpen] = useState(true);
   return <aside className="sidebar">
     <div className="sidebar-top" data-tauri-drag-region><Brand /><button className="icon-button" aria-label="Настроить папки" onClick={() => onView("library")}><Settings2 size={17} /></button></div>
@@ -33,7 +33,10 @@ function Sidebar({ view, documentCount, threads, activeThreadId, updateStatus, o
     <div className="sidebar-spacer" />
     <div className="local-card"><div className="local-icon"><Database size={17} /></div><div><strong>Ваши файлы локальны</strong><span>По запросу передаётся только нужный контекст</span></div><Check size={15} className="local-check" /></div>
     <button className={`update-control update-control--${updateStatus.state}`} disabled={updateStatus.state === "checking" || updateStatus.downloading} onClick={updateStatus.available ? onInstallUpdate : onCheckUpdate} title={updateStatus.error || "Проверить наличие обновлений"}>{updateStatus.state === "checking" || updateStatus.downloading ? <RefreshCw className="spin" size={15} /> : updateStatus.available ? <Download size={15} /> : <RefreshCw size={15} />}<span><strong>{updateStatus.downloading ? `Загрузка ${updateStatus.progress || 0}%` : updateStatus.available ? `Обновить до ${updateStatus.version}` : updateStatus.state === "error" ? "Повторить проверку" : "Проверить обновления"}</strong><small>{updateStatus.state === "up-to-date" ? "Установлена последняя версия" : updateStatus.downloading ? "Не закрывайте OfficeGhost" : updateStatus.error || "Обновления устанавливаются безопасно"}</small></span></button>
-    <button className="profile"><CircleUserRound size={22} /><span><strong>Личное пространство</strong><small>OfficeGhost 0.3.1</small></span><ChevronDown size={15} /></button>
+    <button className={view === "account" ? "profile active" : "profile"} onClick={() => onView("account")}>
+      {authStatus.profile?.imageUrl ? <img src={authStatus.profile.imageUrl} alt="" /> : <CircleUserRound size={22} />}
+      <span><strong>{authStatus.profile?.name || "Личное пространство"}</strong><small>{authStatus.authenticated ? authStatus.profile?.email : "Войти в OfficeGhost"}</small></span><ChevronRight size={15} />
+    </button>
   </aside>;
 }
 
@@ -139,6 +142,44 @@ function AutomationsView({ settings, onSettings }: { settings: Settings; onSetti
   return <main className="page-main automations-page"><header className="page-header" data-tauri-drag-region><div><span className="eyebrow">Работает в фоне</span><h1>Автоматизации</h1><p>OfficeGhost сам поддерживает библиотеку в порядке.</p></div></header><section className="automation-grid"><article className="automation-card featured"><div className="automation-icon"><RefreshCw size={20} /></div><div className="automation-title"><span><StatusDot active={settings.scheduleEnabled !== false} />{settings.scheduleEnabled !== false ? "Активно" : "Приостановлено"}</span><h2>Обновлять индекс</h2><p>Находит новые и изменённые документы каждые {settings.scheduleMinutes || 30} минут.</p></div><Toggle checked={settings.scheduleEnabled !== false} onChange={(value) => patchSetting({ scheduleEnabled: value })} /><div className="automation-meta"><Clock3 size={15} />Интервал: {settings.scheduleMinutes || 30} минут</div></article><article className="automation-card muted-card"><div className="automation-icon purple"><FileArchive size={20} /></div><div className="automation-title"><span>В разработке</span><h2>Разбирать загрузки</h2><p>Раскладывать новые файлы по папкам на основе названия и содержимого.</p></div></article><article className="automation-card muted-card"><div className="automation-icon orange"><WandSparkles size={20} /></div><div className="automation-title"><span>В разработке</span><h2>Еженедельная сводка</h2><p>Собирать изменения в выбранных документах в короткий отчёт.</p></div></article></section></main>;
 }
 
+function AccountView({ authStatus, documentCount, updateStatus, onAuthChange }: { authStatus: DesktopAuthStatus; documentCount: number; updateStatus: UpdateStatus; onAuthChange: (status: DesktopAuthStatus) => void }) {
+  const waiting = authStatus.status === "waiting";
+  const signIn = async () => onAuthChange(await beginDesktopAuth());
+  const signOut = async () => onAuthChange(await signOutDesktop());
+
+  if (!authStatus.authenticated || !authStatus.profile) {
+    return <main className="account-view account-view--signed-out">
+      <header className="account-app-header" data-tauri-drag-region><span>Аккаунт OfficeGhost</span><small>ЛИЧНОЕ ПРОСТРАНСТВО</small></header>
+      <section className="account-signin-card">
+        <div className="account-orbit-app"><img src="/officeghost-mark.png" alt="" /></div>
+        <span className="eyebrow">Синхронизация аккаунта</span>
+        <h1>Войдите, не покидая безопасный поток.</h1>
+        <p>OfficeGhost откроет страницу входа в вашем браузере. После Google-авторизации браузер вернёт вас прямо в приложение.</p>
+        <button className="account-signin-button" disabled={waiting} onClick={signIn}>{waiting ? <RefreshCw className="spin" size={17} /> : <LogIn size={17} />}{waiting ? "Ждём подтверждение в браузере…" : "Войти через браузер"}</button>
+        {authStatus.error && <div className="account-auth-error"><AlertCircle size={15} />{authStatus.error}</div>}
+        <div className="account-flow-note"><ShieldCheck size={17} /><span><strong>Пароль не передаётся приложению</strong><small>Авторизация выполняется на защищённом сайте OfficeGhost</small></span></div>
+      </section>
+    </main>;
+  }
+
+  const profile = authStatus.profile;
+  return <main className="account-view">
+    <header className="account-app-header" data-tauri-drag-region><span>Аккаунт OfficeGhost</span><small>СЕССИЯ АКТИВНА</small></header>
+    <div className="account-app-content">
+      <section className="account-identity-card">
+        <div className="account-identity-main"><img src={profile.imageUrl || "/officeghost-mark.png"} alt="" /><div><span className="eyebrow">Личное пространство</span><h1>{profile.name}</h1><p>{profile.email}</p></div></div>
+        <span className="account-plan">{profile.plan || "Early Access"}</span>
+      </section>
+      <section className="account-app-grid">
+        <article><div className="account-metric-icon"><Files size={19} /></div><span><small>ЛОКАЛЬНАЯ БИБЛИОТЕКА</small><strong>{documentCount.toLocaleString("ru-RU")} документов</strong><p>Индекс хранится только на этом компьютере.</p></span></article>
+        <article><div className="account-metric-icon"><MonitorCheck size={19} /></div><span><small>ЭТО УСТРОЙСТВО</small><strong>OfficeGhost 0.3.1</strong><p>{updateStatus.available ? `Доступно обновление ${updateStatus.version}` : "Приложение подключено к аккаунту."}</p></span></article>
+      </section>
+      <section className="account-session-panel"><div><ShieldCheck size={20} /><span><strong>Защищённая сессия</strong><small>Вход подтверждён через officeghost.com. Локальные документы не загружаются в аккаунт.</small></span></div><StatusDot /></section>
+      <div className="account-app-actions"><button onClick={() => openPath("https://www.officeghost.com/account/profile")}><ExternalLink size={15} />Управлять профилем на сайте</button><button className="danger" onClick={signOut}><LogOut size={15} />Выйти на этом устройстве</button></div>
+    </div>
+  </main>;
+}
+
 export default function App() {
   const [view, setView] = useState<View>("chat");
   const [threads, setThreads] = useState<ChatThread[]>(() => { try { const stored = JSON.parse(localStorage.getItem(CHAT_STORAGE) || "[]") as ChatThread[]; return stored.length ? stored : [createThread()]; } catch { return [createThread()]; } });
@@ -147,11 +188,12 @@ export default function App() {
   const [aiStatus, setAiStatus] = useState<AiStatus>({ installed: false, installing: false, model: "cloud", online: true });
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle", available: false, version: "", downloading: false, installed: false });
   const [settings, setSettings] = useState<Settings>({ scheduleEnabled: true, scheduleMinutes: 30 });
+  const [authStatus, setAuthStatus] = useState<DesktopAuthStatus>({ authenticated: false, status: "signed_out" });
   useEffect(() => { localStorage.setItem(CHAT_STORAGE, JSON.stringify(threads.slice(0, 50))); }, [threads]);
-  useEffect(() => { Promise.all([getIndexStatus(), getAiStatus(), getSettings(), getAppUpdateStatus()]).then(([index, ai, nextSettings, update]) => { setIndexStatus(index); setAiStatus(ai); setSettings(nextSettings); setUpdateStatus(update); }); let stopIndex = () => {}; let stopAi = () => {}; let stopUpdate = () => {}; subscribeIndexStatus(setIndexStatus).then((stop) => { stopIndex = stop; }); subscribeAiStatus(setAiStatus).then((stop) => { stopAi = stop; }); subscribeAppUpdateStatus(setUpdateStatus).then((stop) => { stopUpdate = stop; }); return () => { stopIndex(); stopAi(); stopUpdate(); }; }, []);
+  useEffect(() => { Promise.all([getIndexStatus(), getAiStatus(), getSettings(), getAppUpdateStatus(), getDesktopAuth()]).then(([index, ai, nextSettings, update, auth]) => { setIndexStatus(index); setAiStatus(ai); setSettings(nextSettings); setUpdateStatus(update); setAuthStatus(auth); }); let stopIndex = () => {}; let stopAi = () => {}; let stopUpdate = () => {}; let stopAuth = () => {}; subscribeIndexStatus(setIndexStatus).then((stop) => { stopIndex = stop; }); subscribeAiStatus(setAiStatus).then((stop) => { stopAi = stop; }); subscribeAppUpdateStatus(setUpdateStatus).then((stop) => { stopUpdate = stop; }); subscribeDesktopAuth(setAuthStatus).then((stop) => { stopAuth = stop; }); return () => { stopIndex(); stopAi(); stopUpdate(); stopAuth(); }; }, []);
   const activeThread = threads.find((thread) => thread.id === activeThreadId) || threads[0];
   const updateThread = (next: ChatThread) => setThreads((current) => current.map((thread) => thread.id === next.id ? next : thread));
   const newChat = () => { const next = createThread(); setThreads((current) => [next, ...current]); setActiveThreadId(next.id); setView("chat"); };
-  const content = useMemo(() => view === "library" ? <LibraryView indexStatus={indexStatus} settings={settings} onIndexStatus={setIndexStatus} onSettings={setSettings} /> : view === "automations" ? <AutomationsView settings={settings} onSettings={setSettings} /> : <ChatView thread={activeThread} threads={threads} indexStatus={indexStatus} aiStatus={aiStatus} onThreadChange={updateThread} onIndexStatus={setIndexStatus} />, [view, activeThread, threads, indexStatus, aiStatus, settings]);
-  return <TooltipProvider><div className="app-shell"><Sidebar view={view} documentCount={indexStatus.fileCount || 0} threads={threads} activeThreadId={activeThreadId} updateStatus={updateStatus} onView={setView} onNewChat={newChat} onOpenChat={(id) => { setActiveThreadId(id); setView("chat"); }} onCheckUpdate={() => { void checkAppUpdate().then(setUpdateStatus); }} onInstallUpdate={() => { void installAppUpdate().then(setUpdateStatus); }} />{content}</div></TooltipProvider>;
+  const content = useMemo(() => view === "library" ? <LibraryView indexStatus={indexStatus} settings={settings} onIndexStatus={setIndexStatus} onSettings={setSettings} /> : view === "automations" ? <AutomationsView settings={settings} onSettings={setSettings} /> : view === "account" ? <AccountView authStatus={authStatus} documentCount={indexStatus.fileCount || 0} updateStatus={updateStatus} onAuthChange={setAuthStatus} /> : <ChatView thread={activeThread} threads={threads} indexStatus={indexStatus} aiStatus={aiStatus} onThreadChange={updateThread} onIndexStatus={setIndexStatus} />, [view, activeThread, threads, indexStatus, aiStatus, settings, authStatus, updateStatus]);
+  return <TooltipProvider><div className="app-shell"><Sidebar view={view} documentCount={indexStatus.fileCount || 0} threads={threads} activeThreadId={activeThreadId} updateStatus={updateStatus} authStatus={authStatus} onView={setView} onNewChat={newChat} onOpenChat={(id) => { setActiveThreadId(id); setView("chat"); }} onCheckUpdate={() => { void checkAppUpdate().then(setUpdateStatus); }} onInstallUpdate={() => { void installAppUpdate().then(setUpdateStatus); }} />{content}</div></TooltipProvider>;
 }

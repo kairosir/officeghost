@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use rand::{distributions::Alphanumeric, Rng};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
@@ -16,7 +17,9 @@ use tauri::{
     Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_updater::UpdaterExt;
+use url::Url;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -44,6 +47,15 @@ struct Settings {
     license_email: String,
     license_key: String,
     license_status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct DesktopAuthData {
+    pending_state: String,
+    token: String,
+    profile: Option<Value>,
+    error: String,
 }
 
 impl Default for Settings {
@@ -154,10 +166,60 @@ fn ai_state_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     app_data_dir(app).map(|p| p.join("ai-state.json"))
 }
 
+fn desktop_auth_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app_data_dir(app).map(|p| p.join("desktop-auth.json"))
+}
+
 fn ensure_parent(path: &Path) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
+}
+
+fn load_desktop_auth_internal(app: &tauri::AppHandle) -> DesktopAuthData {
+    let Some(path) = desktop_auth_path(app) else {
+        return DesktopAuthData::default();
+    };
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<DesktopAuthData>(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn save_desktop_auth_internal(app: &tauri::AppHandle, auth: &DesktopAuthData) {
+    let Some(path) = desktop_auth_path(app) else {
+        return;
+    };
+    ensure_parent(&path);
+    if fs::write(&path, serde_json::to_string_pretty(auth).unwrap_or_else(|_| "{}".to_string())).is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+        }
+    }
+}
+
+fn desktop_auth_status(auth: &DesktopAuthData) -> Value {
+    let status = if !auth.token.is_empty() && auth.profile.is_some() {
+        "authenticated"
+    } else if !auth.pending_state.is_empty() {
+        "waiting"
+    } else if !auth.error.is_empty() {
+        "error"
+    } else {
+        "signed_out"
+    };
+    json!({
+      "authenticated": status == "authenticated",
+      "status": status,
+      "profile": auth.profile,
+      "error": auth.error,
+    })
+}
+
+fn emit_desktop_auth(app: &tauri::AppHandle, auth: &DesktopAuthData) {
+    let _ = app.emit("desktop-auth-updated", desktop_auth_status(auth));
 }
 
 fn migrate_legacy_user_data(app: &tauri::AppHandle) {
@@ -2168,6 +2230,108 @@ fn apply_hotkey(app: &tauri::AppHandle, hotkey: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn complete_desktop_auth(app: tauri::AppHandle, code: String, state: String) {
+    let payload = json!({ "code": code, "state": state }).to_string();
+    let (exit_code, stdout, stderr) = run_command_capture_timeout(
+        "curl",
+        &[
+            "-sS",
+            "--max-time",
+            "30",
+            "-X",
+            "POST",
+            "https://www.officeghost.com/api/desktop-auth/session",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            payload.as_str(),
+        ],
+        Duration::from_secs(35),
+    );
+
+    let mut auth = load_desktop_auth_internal(&app);
+    auth.pending_state.clear();
+    if exit_code != 0 {
+        auth.error = if stderr.trim().is_empty() { "Не удалось связаться с OfficeGhost".to_string() } else { stderr.trim().to_string() };
+    } else if let Ok(response) = serde_json::from_str::<Value>(&stdout) {
+        if let (Some(token), Some(profile)) = (response.get("token").and_then(|value| value.as_str()), response.get("profile")) {
+            auth.token = token.to_string();
+            auth.profile = Some(profile.clone());
+            auth.error.clear();
+        } else {
+            auth.error = response.get("error").and_then(|value| value.as_str()).unwrap_or("Не удалось завершить вход").to_string();
+        }
+    } else {
+        auth.error = "Сайт OfficeGhost вернул некорректный ответ".to_string();
+    }
+    save_desktop_auth_internal(&app, &auth);
+    emit_desktop_auth(&app, &auth);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn handle_desktop_auth_url(app: &tauri::AppHandle, raw_url: &str) {
+    let Ok(url) = Url::parse(raw_url) else { return; };
+    if url.scheme() != "officeghost" || url.host_str() != Some("auth") || url.path() != "/callback" {
+        return;
+    }
+    let values = url.query_pairs().collect::<HashMap<_, _>>();
+    let code = values.get("code").map(|value| value.to_string()).unwrap_or_default();
+    let state = values.get("state").map(|value| value.to_string()).unwrap_or_default();
+    let pending = load_desktop_auth_internal(app).pending_state;
+    if code.len() < 32 || state.is_empty() || state != pending {
+        return;
+    }
+    let handle = app.clone();
+    thread::spawn(move || complete_desktop_auth(handle, code, state));
+}
+
+#[tauri::command]
+fn get_desktop_auth(app: tauri::AppHandle) -> Value {
+    desktop_auth_status(&load_desktop_auth_internal(&app))
+}
+
+#[tauri::command]
+fn begin_desktop_auth(app: tauri::AppHandle) -> Value {
+    let state = rand::thread_rng().sample_iter(&Alphanumeric).take(48).map(char::from).collect::<String>();
+    let mut auth = load_desktop_auth_internal(&app);
+    auth.pending_state = state.clone();
+    auth.error.clear();
+    save_desktop_auth_internal(&app, &auth);
+    emit_desktop_auth(&app, &auth);
+    open_target(&format!("https://www.officeghost.com/desktop-auth?state={state}"));
+    desktop_auth_status(&auth)
+}
+
+#[tauri::command]
+fn sign_out_desktop(app: tauri::AppHandle) -> Value {
+    let auth = load_desktop_auth_internal(&app);
+    if !auth.token.is_empty() {
+        let authorization = format!("Authorization: Bearer {}", auth.token);
+        let _ = run_command_capture_timeout(
+            "curl",
+            &[
+                "-sS",
+                "--max-time",
+                "15",
+                "-X",
+                "DELETE",
+                "https://www.officeghost.com/api/desktop-auth/session",
+                "-H",
+                authorization.as_str(),
+            ],
+            Duration::from_secs(20),
+        );
+    }
+    let next = DesktopAuthData::default();
+    save_desktop_auth_internal(&app, &next);
+    emit_desktop_auth(&app, &next);
+    desktop_auth_status(&next)
+}
+
 #[tauri::command]
 fn open_path(file_path: String) {
     open_target(&file_path);
@@ -3514,6 +3678,14 @@ mod document_tests {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -3527,6 +3699,22 @@ pub fn run() {
         .manage(AppState::default())
         .setup(|app| {
             migrate_legacy_user_data(&app.handle().clone());
+
+            #[cfg(any(target_os = "linux", all(debug_assertions, target_os = "windows")))]
+            app.deep_link().register_all()?;
+
+            let auth_app = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    handle_desktop_auth_url(&auth_app, url.as_str());
+                }
+            });
+
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                for url in urls {
+                    handle_desktop_auth_url(&app.handle().clone(), url.as_str());
+                }
+            }
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -3653,6 +3841,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_desktop_auth,
+            begin_desktop_auth,
+            sign_out_desktop,
             open_path,
             open_in_folder,
             hide_window,

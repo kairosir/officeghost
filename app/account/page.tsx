@@ -43,19 +43,7 @@ export default async function AccountPage() {
         </article>
       </div>
 
-      <div className="account-columns">
-        <section className="account-panel download-panel">
-          <div className="panel-heading">
-            <div><p className="section-kicker">Приложение</p><h2>OfficeGhost для компьютера</h2></div>
-            <span className="version-pill">Последняя версия</span>
-          </div>
-          <p>Установите OfficeGhost и начните общаться со своими документами. Обновления будут приходить автоматически.</p>
-          <div className="platform-downloads">
-            <a href="https://github.com/kairosir/officeghost/releases/latest" target="_blank" rel="noreferrer"><span className="platform-icon">⊞</span><div><small>СКАЧАТЬ ДЛЯ</small><strong>Windows</strong></div><b>↓</b></a>
-            <a href="https://github.com/kairosir/officeghost/releases/latest" target="_blank" rel="noreferrer"><span className="platform-icon">●</span><div><small>СКАЧАТЬ ДЛЯ</small><strong>macOS</strong></div><b>↓</b></a>
-          </div>
-        </section>
-
+      <div className="account-columns account-columns--single">
         <section className="account-panel security-panel">
           <div className="panel-heading"><div><p className="section-kicker">Безопасность</p><h2>Защита аккаунта</h2></div></div>
           <ul>

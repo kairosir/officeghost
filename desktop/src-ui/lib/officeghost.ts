@@ -7,6 +7,8 @@ export type AiStatus = { installed: boolean; installing: boolean; model: string;
 export type UpdateStatus = { state: "idle" | "checking" | "available" | "downloading" | "installed" | "up-to-date" | "error"; available: boolean; version: string; downloading: boolean; installed: boolean; progress?: number; error?: string; manual?: boolean };
 export type Settings = { roots?: string[]; paused?: boolean; hotkey?: string; scheduleEnabled?: boolean; scheduleMinutes?: number; aiModel?: string };
 export type HistoryMessage = { role: "user" | "assistant"; content: string };
+export type DesktopProfile = { id: string; name: string; email: string; imageUrl: string; plan: string };
+export type DesktopAuthStatus = { authenticated: boolean; status: "signed_out" | "waiting" | "authenticated" | "error"; profile?: DesktopProfile; error?: string };
 
 const demoFiles: SearchResult[] = [
   { title: "Стратегия продукта 2026.pdf", path: "/Documents/OfficeGhost/Стратегия продукта 2026.pdf", snippet: "Приоритеты продукта: приватная работа с документами, быстрый локальный поиск и понятные автоматизации.", score: 3 },
@@ -70,6 +72,23 @@ export async function subscribeAiStatus(handler: (status: AiStatus) => void): Pr
 export async function subscribeAppUpdateStatus(handler: (status: UpdateStatus) => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   return listen<UpdateStatus>("app-update-status", (event) => handler(event.payload));
+}
+
+export async function getDesktopAuth(): Promise<DesktopAuthStatus> {
+  return isTauri() ? call("get_desktop_auth") : { authenticated: false, status: "signed_out" };
+}
+
+export async function beginDesktopAuth(): Promise<DesktopAuthStatus> {
+  return isTauri() ? call("begin_desktop_auth") : { authenticated: false, status: "waiting" };
+}
+
+export async function signOutDesktop(): Promise<DesktopAuthStatus> {
+  return isTauri() ? call("sign_out_desktop") : { authenticated: false, status: "signed_out" };
+}
+
+export async function subscribeDesktopAuth(handler: (status: DesktopAuthStatus) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<DesktopAuthStatus>("desktop-auth-updated", (event) => handler(event.payload));
 }
 
 export async function searchDocuments(query: string): Promise<SearchResult[]> {

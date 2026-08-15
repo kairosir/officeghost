@@ -6,7 +6,7 @@ const configured = Boolean(
 );
 
 const withClerk = configured
-  ? clerkMiddleware({ frontendApiProxy: { enabled: true } })
+  ? clerkMiddleware()
   : null;
 
 export default function proxy(request: NextRequest, event: Parameters<NonNullable<typeof withClerk>>[1]) {

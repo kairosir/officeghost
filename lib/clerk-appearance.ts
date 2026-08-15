@@ -1,4 +1,11 @@
 export const clerkAppearance = {
+  options: {
+    logoImageUrl: "https://www.officeghost.com/brand/officeghost-mark-512.png",
+    logoLinkUrl: "https://www.officeghost.com",
+    logoPlacement: "inside",
+    socialButtonsPlacement: "top",
+    socialButtonsVariant: "blockButton",
+  },
   variables: {
     colorPrimary: "#11120f",
     colorBackground: "#ffffff",

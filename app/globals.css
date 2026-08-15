@@ -168,10 +168,11 @@ button { font: inherit; }
 .account-side-note p { color: #a5a79f; font-size: 10px; line-height: 1.55; margin: 10px 0 0; }
 .back-to-site { margin-top: 20px; color: #888b82; font-size: 10px; padding-left: 5px; }
 .account-main { min-width: 0; }
-.account-topbar { height: 82px; padding: 0 clamp(24px, 4vw, 58px); background: rgba(255,255,255,.5); border-bottom: 1px solid rgba(17,18,15,.1); display: flex; align-items: center; justify-content: space-between; }
+.account-topbar { height: 82px; padding: 0 18px 0 clamp(24px, 4vw, 58px); background: rgba(255,255,255,.5); border-bottom: 1px solid rgba(17,18,15,.1); display: flex; align-items: center; }
 .account-topbar small, .account-topbar strong { display: block; }
 .account-topbar small { color: #999b92; font: 8px var(--font-geist-mono); letter-spacing: .12em; margin-bottom: 4px; }
 .account-topbar strong { font-size: 12px; }
+.account-profile-control { margin-left: auto; display: flex; align-items: center; justify-content: flex-end; }
 .account-avatar { width: 36px; height: 36px; }
 .account-content { width: min(1180px, calc(100% - clamp(48px, 8vw, 116px))); margin: 0 auto; padding: 55px 0 80px; }
 .account-welcome { min-height: 220px; padding: clamp(28px, 4vw, 50px); background: var(--lime); border-radius: 10px; display: flex; align-items: center; justify-content: space-between; overflow: hidden; position: relative; }

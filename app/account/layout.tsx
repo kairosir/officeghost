@@ -41,7 +41,9 @@ export default async function AccountLayout({ children }: { children: React.Reac
       <section className="account-main">
         <header className="account-topbar">
           <div><small>ЛИЧНЫЙ КАБИНЕТ</small><strong>{name}</strong></div>
-          <UserButton userProfileUrl="/account/profile" appearance={{ elements: { avatarBox: "clerk-avatar account-avatar" } }} />
+          <div className="account-profile-control">
+            <UserButton userProfileUrl="/account/profile" appearance={{ elements: { avatarBox: "clerk-avatar account-avatar" } }} />
+          </div>
         </header>
         {children}
       </section>

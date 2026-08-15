@@ -172,7 +172,7 @@ function AccountView({ authStatus, documentCount, updateStatus, onAuthChange }: 
       </section>
       <section className="account-app-grid">
         <article><div className="account-metric-icon"><Files size={19} /></div><span><small>ЛОКАЛЬНАЯ БИБЛИОТЕКА</small><strong>{documentCount.toLocaleString("ru-RU")} документов</strong><p>Индекс хранится только на этом компьютере.</p></span></article>
-        <article><div className="account-metric-icon"><MonitorCheck size={19} /></div><span><small>ЭТО УСТРОЙСТВО</small><strong>OfficeGhost 0.3.1</strong><p>{updateStatus.available ? `Доступно обновление ${updateStatus.version}` : "Приложение подключено к аккаунту."}</p></span></article>
+        <article><div className="account-metric-icon"><MonitorCheck size={19} /></div><span><small>ЭТО УСТРОЙСТВО</small><strong>OfficeGhost 0.3.2</strong><p>{updateStatus.available ? `Доступно обновление ${updateStatus.version}` : "Приложение подключено к аккаунту."}</p></span></article>
       </section>
       <section className="account-session-panel"><div><ShieldCheck size={20} /><span><strong>Защищённая сессия</strong><small>Вход подтверждён через officeghost.com. Локальные документы не загружаются в аккаунт.</small></span></div><StatusDot /></section>
       <div className="account-app-actions"><button onClick={() => openPath("https://www.officeghost.com/account/profile")}><ExternalLink size={15} />Управлять профилем на сайте</button><button className="danger" onClick={signOut}><LogOut size={15} />Выйти на этом устройстве</button></div>

@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
+import { ruRU } from "@clerk/localizations";
+import { clerkAppearance } from "@/lib/clerk-appearance";
+import { isClerkConfigured } from "@/lib/auth-config";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin", "cyrillic"] });
@@ -28,9 +32,22 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const content = isClerkConfigured() ? (
+    <ClerkProvider
+      localization={ruRU}
+      appearance={clerkAppearance}
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
+      signInFallbackRedirectUrl="/account"
+      signUpFallbackRedirectUrl="/account"
+    >
+      {children}
+    </ClerkProvider>
+  ) : children;
+
   return (
     <html lang="ru">
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body>
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>{content}</body>
     </html>
   );
 }

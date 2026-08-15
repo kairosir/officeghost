@@ -1,3 +1,6 @@
+import { AuthControls } from "@/components/auth-controls";
+import { Brand } from "@/components/brand";
+
 const features = [
   {
     number: "01",
@@ -22,16 +25,13 @@ export default function Home() {
   return (
     <main>
       <header className="site-header shell">
-        <a className="brand" href="#top" aria-label="OfficeGhost — на главную">
-          <span className="brand-mark" aria-hidden="true"><i /></span>
-          <span>OfficeGhost</span>
-        </a>
+        <Brand href="/#top" />
         <nav className="desktop-nav" aria-label="Основная навигация">
           <a href="#product">Возможности</a>
           <a href="#shortcuts">Автоматизации</a>
           <a href="#privacy">Приватность</a>
         </nav>
-        <a className="header-cta" href="#download">Скачать <span>↘</span></a>
+        <AuthControls />
       </header>
 
       <section className="hero shell" id="top">
@@ -178,7 +178,7 @@ export default function Home() {
       </section>
 
       <footer className="site-footer shell">
-        <a className="brand" href="#top"><span className="brand-mark"><i /></span><span>OfficeGhost</span></a>
+        <Brand href="/#top" />
         <p>Ваши документы умеют отвечать.</p>
         <div><a href="#product">Возможности</a><a href="#privacy">Приватность</a><a href="mailto:arhey575@gmail.com">Связаться</a></div>
         <small>© 2026 OfficeGhost</small>
